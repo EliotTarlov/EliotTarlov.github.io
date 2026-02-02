@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Homunculus</title>
+    <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0px;
+      border: 0;
+      overflow: hidden; /*  Disable scrollbars */
+      display: block;  /* No floating content on sides */
+    }
+    
+    </style>
+</head>
+
+<body>
+    <canvas id='c' style='position:absolute; left:0px; top:0px;'>
+      Get a better browser, loser.
+    </canvas>
+
+    <script>
+      var gridWidth=16*10;
+      var gridHeight=9*10;
+      var squareWidth=window.innerWidth/gridWidth;
+      var squareHeight=window.innerHeight/gridHeight;
+      var defaultValue=false;
+      var running=true;
+      var trueColor=/*'#71eeb8';*/'#000d4d';
+      var falseColor=/*'#0b1652';*/'#F89880';
+      var fps=2
+      var ruleString=[[3],[2,3]];
+      var tempRuleString=[[],[]];
+      var slashPressed=false;//editing first or second part of rulestring
+      var gliderGunPlan=[[1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,1,1],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,1,0,0,0,1,1],[	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,0,0,0,0,0]]
+      //display instructions
+      var instructions="This is life. Press [h] to display this message at any time.\nPress [space] to pause the simulation.\nPress [backspace] to eradicate all life.\n[click] to put cells where you like.\nPress [+] and [-] to increase or decrease the speed of rendering. \nType numbers, [/] and [enter] to change how life survives manually. (rulestrings are to be given in B/S (birth/survive) form, by default is set to conway (23/3)).\nZoom out by pressing [left bracket] and in by pressing [right bracket]";
+      var clickMode='invert';
+      (function() {
+        var
+        // Obtain a reference to the canvas element using its id.
+         htmlCanvas = document.getElementById('c');
+        // Obtain a graphics context on the canvas element for drawing.
+         context = htmlCanvas.getContext('2d');
+
+       	 grid = Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
+      	 window.onload=initialize();
+       	 function initialize() {
+           console.log(instructions);
+           alert(instructions);
+           strokeStyle='grey';
+           window.addEventListener('resize', resizeCanvas, false);
+           randomizeGrid(grid);
+           resizeCanvas();
+           let interval=setInterval(function(){iterate(grid),redraw()},1000/fps)
+           document.addEventListener("click", setCellAtMouse);//mouse controls
+           function reRun(){
+             clearInterval(interval);
+             interval=setInterval(function(){iterate(grid),redraw()},1000/fps)
+           }
+           document.addEventListener('keyup', event => {//keyboard controls
+             if(event.code.slice(0,5)=="Digit"){
+               tempRuleString[+slashPressed].push(parseInt(event.code[5]));//+slashPressed converts that var from bool to int so we are editing the first or second part then parseInt taked the event code and makes it an int.
+             }
+             switch (event.code) {
+               case 'KeyH':
+                  alert(instructions);
+               case 'Space':
+                   if(running){
+                     clearInterval(interval);
+                     running=false;
+                   }
+                   else{
+                    interval=setInterval(function(){iterate(grid),redraw()},1000/fps)
+                    running=true;
+                   }
+                   break;
+               case 'KeyG'://insert glider gun at mouse position
+                  clickMode='glider gun';
+                  break;
+                case 'Backspace'://clear window
+                  grid = Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
+                  redraw();
+                  break;
+                case'KeyI':
+    		     	    clickMode='invert';
+                  break;
+      		    case'Equal':
+       		     	 fps=fps*2;
+                   reRun();
+                   break;
+       		    case'Minus':
+    		    	    fps=fps/2;
+                   reRun();
+                   break;
+    		       case'KeyR':
+                  randomizeGrid(grid);
+                  break;
+                case"Enter":
+                  ruleString=tempRuleString;
+                  tempRuleString=[[],[]];
+                  slashPressed=false;
+                  break;
+                case "Slash":
+                  slashPressed= !slashPressed;
+                  break;
+                case "KeyC":
+                  ruleString=[[3],[2,3]]
+                case "BracketLeft":
+                  gridWidth+=16;
+                  gridHeight+=9;
+                  newGrid=Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
+                  for(let x=0;x<grid.length;x++){
+                     for(let y=0;y<grid[0].length;y++){
+                        newGrid[x][y]=grid[x][y];
+                     }
+                  }
+                  grid=newGrid;
+                  resizeCanvas();
+                  break;
+                case "BracketLeft":
+                  gridWidth=Math.floor(gridWidth*1.2);
+                  gridHeight=Math.floor(gridHeight*1.2);
+                  newGrid=Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
+                  for(let x=0;x<grid.length;x++){
+                     for(let y=0;y<grid[0].length;y++){
+                        newGrid[x][y]=grid[x][y];
+                     }
+                  }
+                  grid=newGrid;
+                  resizeCanvas();
+                  break;
+                case "BracketRight":
+                  gridWidth=Math.floor(gridWidth*.83333);
+                  gridHeight=Math.floor(gridHeight*.83333);
+                  newGrid=Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
+                  for(let x=0;x<newGrid.length;x++){
+                     for(let y=0;y<newGrid[0].length;y++){
+                        newGrid[x][y]=grid[x][y];
+                     }
+                  }
+                  grid=newGrid;
+                  resizeCanvas();
+                  break;
+              }
+           })
+        }
+        function resizeCanvas() {
+            htmlCanvas.width = window.innerWidth;
+            htmlCanvas.height = window.innerHeight;
+            squareWidth=window.innerWidth/gridWidth;
+            squareHeight=window.innerHeight/gridHeight;
+            redraw();
+        }
+
+        function redraw() {
+           context.fillRect(0, 0, window.innerWidth, window.innerHeight);
+           drawGrid();
+        }
+        function drawGrid(){
+          for(let x=0;x<gridWidth;x++){
+            for(let y=0;y<gridHeight;y++){
+                if(get(grid,x,y)){
+                  context.fillStyle=trueColor;
+                }
+                else{
+                  context.fillStyle=falseColor;
+                }
+                context.fillRect(squareWidth*x,squareHeight*y,squareWidth,squareHeight);
+            }
+          }
+        }
+        function setCellAtMouse(event){
+          mouseX=event.clientX;
+          mouseY=event.clientY;
+          gridX=Math.floor(mouseX/squareWidth);
+          gridY=Math.floor(mouseY/squareHeight);
+          if (clickMode=='invert'){
+          	grid[gridX][gridY]=!grid[gridX][gridY];
+          }
+          else if(clickMode=='glider gun'){
+          	for(let y=0;y<gliderGunPlan.length;y++){
+          		for(let x=0;x<gliderGunPlan[0].length;x++){
+          			grid[gridX+x][gridY+y]=gliderGunPlan[y][x];
+          		}
+          	}
+          }
+          redraw();
+        }
+    })();
+    function get(array,x,y){
+      //allows for getting with elegant overflow handling.
+      if(x>=0 && x<array.length && y>=0 && y<array[x].length){
+        return array[x][y];
+      }
+      else{
+        return false;
+      }
+    }
+    function randomizeGrid(array){
+      for(let x=0;x<array.length;x++){
+        for(let y=0;y<array[x].length;y++){
+          array[x][y]=(Math.random() < 0.5)
+        }
+      }
+    }
+    function sumOfNeighbors(array,x,y){
+      let neighbors=[]
+      //formulated like this to make a getNeighbors function easier if I need it.
+      neighbors.push(get(array,x+1,y+1));
+      neighbors.push(get(array,x,y+1));
+      neighbors.push(get(array,x-1,y+1));
+      neighbors.push(get(array,x+1,y));
+      neighbors.push(get(array,x-1,y));
+      neighbors.push(get(array,x+1,y-1));
+      neighbors.push(get(array,x,y-1));
+      neighbors.push(get(array,x-1,y-1));
+      const summer = (previousValue, currentValue) => previousValue + currentValue;
+      return neighbors.reduce(summer);
+
+    }
+    function iterate(array){
+      let newGrid = Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
+      for(let x=0;x<array.length;x++){
+        for(let y=0;y<array[0].length;y++){
+          if((array[x][y] && ruleString[1].includes(sumOfNeighbors(array,x,y)))||(!array[x][y]&&ruleString[0].includes(sumOfNeighbors(array,x,y)))){//stays or comes alive depending on rulestring
+              newGrid[x][y]=true;
+          }
+        }
+      }
+      for(let x=0;x<array.length;x++){
+        for(let y=0;y<array[0].length;y++){
+          array[x][y]=newGrid[x][y];
+        }
+      }
+    }
+    </script>
+</body>
+</html>
