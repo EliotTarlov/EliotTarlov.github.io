@@ -1,289 +1,197 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <meta charset="utf-8">
+    <meta charset="UTF-8">
     <title>Homunculus</title>
     <style>
-    html, body {
-      width: 100%;
-      height: 100%;
-      margin: 0px;
-      border: 0;
-      overflow: hidden; /*  Disable scrollbars */
-      display: block;  /* No floating content on sides */
-    }
-    #ui-overlay {
-      position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(255, 255, 255, 0.9);
-      padding: 10px 10px;
-      border-radius: 8px;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-      display: flex;
-      flex-direction: column; /* Stack title on top of inputs */
-      align-items: center;
-      font-family: sans-serif;
-      font-size: 14px;
-      z-index: 100;
-      border: 1px solid #ccc;
-    }
-
-    #overlay-title {
-        margin-bottom: 2px;
-        font-weight: bold;
-        color: #444;
-        font-size: 14px;
-        text-transform: capitalize;
-    }
-
-    .controls-row {
-        display: flex;
-        gap: 15px;
-    }
-
-    .input-group {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    #ui-overlay input {
-      width: 60px;
-      text-align: center;
-      padding: 5px;
-      border: 1px solid #999;
-      border-radius: 4px;
-      font-weight: bold;
-      color: #333;
-    }
-
-    #ui-overlay label {
-      margin-bottom: 4px;
-      font-size: 12px;
-      font-weight: bold;
-      color: #555;
-    }
-  </style>
+        body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; }
+        canvas { width: 100vw; height: 100vh; display: block; cursor: grab; }
+        canvas:active { cursor: grabbing; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; background: rgba(0,0,0,0.5); padding: 8px; border-radius: 4px; font-size: 12px; }
+    </style>
 </head>
-
 <body>
-      <div id="ui-overlay">
-      <div id="overlay-title">how many companions do you need</div>
-      <div class="controls-row">
-          <div class="input-group">
-            <label for="birthInput">To Become Alive?</label>
-            <input type="text" id="birthInput" placeholder="">
-          </div>
-          <div class="input-group">
-            <label for="surviveInput">To Stay Alive?</label>
-            <input type="text" id="surviveInput" placeholder="">
-          </div>
-      </div>
-    </div>
+    <div id="ui">Scroll to Zoom | Drag to Pan</div>
+    <canvas id="glCanvas"></canvas>
 
-    <canvas id='c' style='position:absolute; left:0px; top:0px;'>
-      Your Browser is Incompatible With This Site, Please Upgrade to Continue.
-    </canvas>
+    <script id="vs" type="x-shader/x-vertex">#version 300 es
+        in vec4 position;
+        void main() { gl_Position = position; }
+    </script>
+
+    <!-- Runs at fixed simulation resolution -->
+    <script id="fs-buffer-a" type="x-shader/x-fragment">#version 300 es
+        precision highp float;
+        uniform vec3 iResolution;
+        uniform int iFrame;
+        uniform sampler2D iChannel0;
+        out vec4 fragColor;
+
+        int survivalBitMask = (1<<3)+(1<<2);
+        int birthBitMask = (1<<3);
+
+        int cell(ivec2 p) {
+            ivec2 r = ivec2(textureSize(iChannel0, 0));
+            p = (p + r) % r; 
+            return (texelFetch(iChannel0, p, 0).x > 0.5) ? 1 : 0;
+        }
+
+        float hash1(float n) { return fract(sin(n) * 138.5453123); }
+
+        void main() {
+            ivec2 px = ivec2(gl_FragCoord.xy);
+            int neighbors = cell(px+ivec2(-1,-1)) + cell(px+ivec2(0,-1)) + cell(px+ivec2(1,-1))
+                          + cell(px+ivec2(-1, 0))                        + cell(px+ivec2(1, 0))
+                          + cell(px+ivec2(-1, 1)) + cell(px+ivec2(0, 1)) + cell(px+ivec2(1, 1));
+            
+            int alive = cell(px);
+            int neighborsBitMask = 1 << neighbors;
+            float f = (((alive==1) && ((neighborsBitMask & survivalBitMask)!=0))
+                        || ((neighborsBitMask & birthBitMask)!=0)) ? 1.0 : 0.0;
+            
+            if(iFrame < 2) {
+                f = step(0.9, hash1(gl_FragCoord.x * 13.0 + hash1(gl_FragCoord.y * 71.1)));
+            }
+            fragColor = vec4(f, 0.0, 0.0, 1.0);
+        }
+    </script>
+
+    <!-- viewport, handles zoom and pan -->
+    <script id="fs-main" type="x-shader/x-fragment">#version 300 es
+        precision highp float;
+        uniform vec3 iResolution;      // Canvas size
+        uniform vec2 iSimResolution;   // Simulation texture size
+        uniform sampler2D iChannel0;
+        uniform float u_zoom;
+        uniform vec2 u_offset;
+        out vec4 fragColor;
+
+        void main() {
+            // Convert screen pixels to 0.0 -> 1.0 UV space
+            vec2 uv = gl_FragCoord.xy / iResolution.xy;
+            
+            // apply zoom and offset
+            // adjust for aspect ratio so pixels stay square
+            float aspect = iResolution.x / iResolution.y;
+            vec2 camUV = uv;
+            camUV.x *= aspect; 
+            camUV = (camUV * u_zoom) + u_offset;
+            
+            // convert to integer texels of the simulation grid
+            ivec2 texelCoords = ivec2(camUV * iSimResolution.y);
+            
+            // wrapping logic for display
+            ivec2 r = ivec2(iSimResolution);
+            texelCoords = (texelCoords % r + r) % r;
+
+            float val = texelFetch(iChannel0, texelCoords, 0).x;
+            fragColor = vec4(vec3(val), 1.0);
+        }
+    </script>
 
     <script>
-      var gridWidth=16*10;
-      var gridHeight=9*10;
-      var squareWidth=window.innerWidth/gridWidth;
-      var squareHeight=window.innerHeight/gridHeight;
-      var defaultValue=false;
-      var running=true;
-      var trueColor=/*'#71eeb8';*/'#595959';
-      var falseColor=/*'#0b1652';*/'#fff';
-      var fps=2
-      var ruleString=[[3],[2,3]];
-      var gliderGunPlan=[[1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,1,1],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,1,0,0,0,1,1],[	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,0,0,0,0,0]]
-      //display instructions
-      var instructions="This is life. Press [h] to display this message at any time.\nPress [space] to pause the simulation.\nPress [backspace] to eradicate all life.\n[click] to put cells where you like.\nPress [+] and [-] to increase or decrease the speed of rendering. \nType numbers, [/] and [enter] to change how life survives manually. (rulestrings are to be given in B/S (birth/survive) form, by default is set to conway (23/3)).\nZoom out by pressing [left bracket] and in by pressing [right bracket]";
-      var clickMode='invert';
-      (function() {
-        var
-        // Obtain a reference to the canvas element using its id.
-         htmlCanvas = document.getElementById('c');
-        // Obtain a graphics context on the canvas element for drawing.
-         context = htmlCanvas.getContext('2d');
-         var birthInput = document.getElementById('birthInput');
-         var surviveInput = document.getElementById('surviveInput');
-       	 grid = Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
-      	 window.onload=initialize();
-       	 function initialize() {
-           console.log(instructions);
-           strokeStyle='grey';
-           window.addEventListener('resize', resizeCanvas, false);
-           randomizeGrid(grid);
-           resizeCanvas();
-           let interval=setInterval(function(){iterate(grid),redraw()},1000/fps)
-           document.addEventListener("click", setCellAtMouse);//mouse controls
-           function reRun(){
-             clearInterval(interval);
-             interval=setInterval(function(){iterate(grid),redraw()},1000/fps)
-           }
-           function updateRules() {
-              const bVal = birthInput.value.split('').map(Number).filter(n => !isNaN(n));
-              const sVal = surviveInput.value.split('').map(Number).filter(n => !isNaN(n));
-              ruleString = [bVal, sVal];
-           }
-           birthInput.value="3"
-           surviveInput.value="2,3"
-           birthInput.addEventListener('input', updateRules);
-           surviveInput.addEventListener('input', updateRules);
-           document.addEventListener('keyup', event => {//keyboard controls
-             switch (event.code) {
-               case 'KeyH':
-                  alert(instructions);
-               case 'Space':
-                   if(running){
-                     clearInterval(interval);
-                     running=false;
-                   }
-                   else{
-                    interval=setInterval(function(){iterate(grid),redraw()},1000/fps)
-                    running=true;
-                   }
-                   break;
-               case 'KeyG'://insert glider gun at mouse position
-                  clickMode='glider gun';
-                  break;
-                case 'Backspace'://clear window
-                  grid = Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
-                  redraw();
-                  break;
-                case'KeyI':
-    		     	    clickMode='invert';
-                  break;
-      		    case'Equal':
-       		     	 fps=fps*2;
-                   reRun();
-                   break;
-       		    case'Minus':
-    		    	    fps=fps/2;
-                   reRun();
-                   break;
-    		       case'KeyR':
-                  randomizeGrid(grid);
-                  break;
-                case "BracketLeft":
-                  gridWidth+=16;
-                  gridHeight+=9;
-                  newGrid=Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
-                  for(let x=0;x<grid.length;x++){
-                     for(let y=0;y<grid[0].length;y++){
-                        newGrid[x][y]=grid[x][y];
-                     }
-                  }
-                  grid=newGrid;
-                  resizeCanvas();
-                  break;
-                case "BracketRight":
-                  gridWidth=Math.floor(gridWidth*.83333);
-                  gridHeight=Math.floor(gridHeight*.83333);
-                  newGrid=Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
-                  for(let x=0;x<newGrid.length;x++){
-                     for(let y=0;y<newGrid[0].length;y++){
-                        newGrid[x][y]=grid[x][y];
-                     }
-                  }
-                  grid=newGrid;
-                  resizeCanvas();
-                  break;
-              }
-           })
-        }
-        function resizeCanvas() {
-            htmlCanvas.width = window.innerWidth;
-            htmlCanvas.height = window.innerHeight;
-            squareWidth=window.innerWidth/gridWidth;
-            squareHeight=window.innerHeight/gridHeight;
-            redraw();
+        const canvas = document.querySelector('#glCanvas');
+        const gl = canvas.getContext('webgl2');
+
+        const SIM_RES = [1920, 1080]; // Fixed game board size
+        let zoom = 1.0;
+        let offset = [0.0, 0.0];
+        let isDragging = false;
+        let lastMouse = [0, 0];
+
+        function createProgram(vsId, fsId) {
+            const vs = gl.createShader(gl.VERTEX_SHADER);
+            gl.shaderSource(vs, document.getElementById(vsId).text); gl.compileShader(vs);
+            const fs = gl.createShader(gl.FRAGMENT_SHADER);
+            gl.shaderSource(fs, document.getElementById(fsId).text); gl.compileShader(fs);
+            const prog = gl.createProgram();
+            gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+            gl.linkProgram(prog);
+            return prog;
         }
 
-        function redraw() {
-           context.fillRect(0, 0, window.innerWidth, window.innerHeight);
-           drawGrid();
-        }
-        function drawGrid(){
-          for(let x=0;x<gridWidth;x++){
-            for(let y=0;y<gridHeight;y++){
-                if(get(grid,x,y)){
-                  context.fillStyle=trueColor;
-                }
-                else{
-                  context.fillStyle=falseColor;
-                }
-                context.fillRect(squareWidth*x,squareHeight*y,squareWidth,squareHeight);
-            }
-          }
-        }
-        function setCellAtMouse(event){
-          mouseX=event.clientX;
-          mouseY=event.clientY;
-          gridX=Math.floor(mouseX/squareWidth);
-          gridY=Math.floor(mouseY/squareHeight);
-          if (clickMode=='invert'){
-          	grid[gridX][gridY]=!grid[gridX][gridY];
-          }
-          else if(clickMode=='glider gun'){
-          	for(let y=0;y<gliderGunPlan.length;y++){
-          		for(let x=0;x<gliderGunPlan[0].length;x++){
-          			grid[gridX+x][gridY+y]=gliderGunPlan[y][x];
-          		}
-          	}
-          }
-          redraw();
-        }
-    })();
-    function get(array,x,y){
-      //allows for getting with elegant overflow handling.
-      if(x>=0 && x<array.length && y>=0 && y<array[x].length){
-        return array[x][y];
-      }
-      else{
-        return false;
-      }
-    }
-    function randomizeGrid(array){
-      for(let x=0;x<array.length;x++){
-        for(let y=0;y<array[x].length;y++){
-          array[x][y]=(Math.random() < 0.5)
-        }
-      }
-    }
-    function sumOfNeighbors(array,x,y){
-      let neighbors=[]
-      //formulated like this to make a getNeighbors function easier if I need it.
-      neighbors.push(get(array,x+1,y+1));
-      neighbors.push(get(array,x,y+1));
-      neighbors.push(get(array,x-1,y+1));
-      neighbors.push(get(array,x+1,y));
-      neighbors.push(get(array,x-1,y));
-      neighbors.push(get(array,x+1,y-1));
-      neighbors.push(get(array,x,y-1));
-      neighbors.push(get(array,x-1,y-1));
-      const summer = (previousValue, currentValue) => previousValue + currentValue;
-      return neighbors.reduce(summer);
+        const progBufferA = createProgram('vs', 'fs-buffer-a');
+        const progMain = createProgram('vs', 'fs-main');
 
-    }
-    function iterate(array){
-      let newGrid = Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
-      for(let x=0;x<array.length;x++){
-        for(let y=0;y<array[0].length;y++){
-          if((array[x][y] && ruleString[1].includes(sumOfNeighbors(array,x,y)))||(!array[x][y]&&ruleString[0].includes(sumOfNeighbors(array,x,y)))){//stays or comes alive depending on rulestring
-              newGrid[x][y]=true;
-          }
+        // Full-screen quad
+        const vao = gl.createVertexArray();
+        gl.bindVertexArray(vao);
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+        // the game board is handled as a texture
+        let textures = [], fbos = [];
+        for(let i=0; i<2; i++) {
+            textures[i] = gl.createTexture();
+            gl.bindTexture(gl.TEXTURE_2D, textures[i]);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, SIM_RES[0], SIM_RES[1], 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+            fbos[i] = gl.createFramebuffer();
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos[i]);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, textures[i], 0);
         }
-      }
-      for(let x=0;x<array.length;x++){
-        for(let y=0;y<array[0].length;y++){
-          array[x][y]=newGrid[x][y];
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
         }
-      }
-    }
+        window.addEventListener('resize', resize);
+        resize();
+
+        canvas.addEventListener('wheel', e => {
+            const zoomSpeed = 0.1;
+            const delta = e.deltaY > 0 ? 1 + zoomSpeed : 1 - zoomSpeed;
+            zoom *= delta;
+        });
+
+        canvas.addEventListener('mousedown', e => { isDragging = true; lastMouse = [e.clientX, e.clientY]; });
+        window.addEventListener('mouseup', () => isDragging = false);
+        window.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            const dx = (e.clientX - lastMouse[0]) / canvas.height;
+            const dy = (e.clientY - lastMouse[1]) / canvas.height;
+            offset[0] -= dx * zoom;
+            offset[1] += dy * zoom;
+            lastMouse = [e.clientX, e.clientY];
+        });
+
+        let frame = 0;
+        let readIdx = 0;
+
+        function render() {
+            const writeIdx = 1 - readIdx;
+
+            // simulation pass
+            gl.useProgram(progBufferA);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos[writeIdx]);
+            gl.viewport(0, 0, SIM_RES[0], SIM_RES[1]);
+            gl.uniform3f(gl.getUniformLocation(progBufferA, "iResolution"), SIM_RES[0], SIM_RES[1], 1);
+            gl.uniform1i(gl.getUniformLocation(progBufferA, "iFrame"), frame);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, textures[readIdx]);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+            // display pass
+            gl.useProgram(progMain);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.uniform3f(gl.getUniformLocation(progMain, "iResolution"), canvas.width, canvas.height, 1);
+            gl.uniform2f(gl.getUniformLocation(progMain, "iSimResolution"), SIM_RES[0], SIM_RES[1]);
+            gl.uniform1f(gl.getUniformLocation(progMain, "u_zoom"), zoom);
+            gl.uniform2f(gl.getUniformLocation(progMain, "u_offset"), offset[0], offset[1]);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, textures[writeIdx]);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+            readIdx = writeIdx;
+            frame++;
+            requestAnimationFrame(render);
+        }
+        render();
     </script>
 </body>
-</html>
+</html>  
