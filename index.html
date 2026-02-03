@@ -12,11 +12,77 @@
       overflow: hidden; /*  Disable scrollbars */
       display: block;  /* No floating content on sides */
     }
-    
-    </style>
+    #ui-overlay {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.9);
+      padding: 10px 10px;
+      border-radius: 8px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+      display: flex;
+      flex-direction: column; /* Stack title on top of inputs */
+      align-items: center;
+      font-family: sans-serif;
+      font-size: 14px;
+      z-index: 100;
+      border: 1px solid #ccc;
+    }
+
+    #overlay-title {
+        margin-bottom: 2px;
+        font-weight: bold;
+        color: #444;
+        font-size: 14px;
+        text-transform: capitalize;
+    }
+
+    .controls-row {
+        display: flex;
+        gap: 15px;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #ui-overlay input {
+      width: 60px;
+      text-align: center;
+      padding: 5px;
+      border: 1px solid #999;
+      border-radius: 4px;
+      font-weight: bold;
+      color: #333;
+    }
+
+    #ui-overlay label {
+      margin-bottom: 4px;
+      font-size: 12px;
+      font-weight: bold;
+      color: #555;
+    }
+  </style>
 </head>
 
 <body>
+      <div id="ui-overlay">
+      <div id="overlay-title">how many companions do you need</div>
+      <div class="controls-row">
+          <div class="input-group">
+            <label for="birthInput">To Become Alive?</label>
+            <input type="text" id="birthInput" placeholder="">
+          </div>
+          <div class="input-group">
+            <label for="surviveInput">To Stay Alive?</label>
+            <input type="text" id="surviveInput" placeholder="">
+          </div>
+      </div>
+    </div>
+
     <canvas id='c' style='position:absolute; left:0px; top:0px;'>
       Your Browser is Incompatible With This Site, Please Upgrade to Continue.
     </canvas>
@@ -31,9 +97,7 @@
       var trueColor=/*'#71eeb8';*/'#595959';
       var falseColor=/*'#0b1652';*/'#fff';
       var fps=2
-      var ruleString=[[2],[2,3]];
-      var tempRuleString=[[],[]];
-      var slashPressed=false;//editing first or second part of rulestring
+      var ruleString=[[3],[2,3]];
       var gliderGunPlan=[[1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[1,1,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,1,0,0,1,1],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,0,0,0,1,0,0,0,1,1],[	0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,1,1,0,0,0,0,0],[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,0,0,0,0,0]]
       //display instructions
       var instructions="This is life. Press [h] to display this message at any time.\nPress [space] to pause the simulation.\nPress [backspace] to eradicate all life.\n[click] to put cells where you like.\nPress [+] and [-] to increase or decrease the speed of rendering. \nType numbers, [/] and [enter] to change how life survives manually. (rulestrings are to be given in B/S (birth/survive) form, by default is set to conway (23/3)).\nZoom out by pressing [left bracket] and in by pressing [right bracket]";
@@ -44,12 +108,12 @@
          htmlCanvas = document.getElementById('c');
         // Obtain a graphics context on the canvas element for drawing.
          context = htmlCanvas.getContext('2d');
-
+         var birthInput = document.getElementById('birthInput');
+         var surviveInput = document.getElementById('surviveInput');
        	 grid = Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
       	 window.onload=initialize();
        	 function initialize() {
            console.log(instructions);
-           alert(instructions);
            strokeStyle='grey';
            window.addEventListener('resize', resizeCanvas, false);
            randomizeGrid(grid);
@@ -60,10 +124,16 @@
              clearInterval(interval);
              interval=setInterval(function(){iterate(grid),redraw()},1000/fps)
            }
+           function updateRules() {
+              const bVal = birthInput.value.split('').map(Number).filter(n => !isNaN(n));
+              const sVal = surviveInput.value.split('').map(Number).filter(n => !isNaN(n));
+              ruleString = [bVal, sVal];
+           }
+           birthInput.value="3"
+           surviveInput.value="2,3"
+           birthInput.addEventListener('input', updateRules);
+           surviveInput.addEventListener('input', updateRules);
            document.addEventListener('keyup', event => {//keyboard controls
-             if(event.code.slice(0,5)=="Digit"){
-               tempRuleString[+slashPressed].push(parseInt(event.code[5]));//+slashPressed converts that var from bool to int so we are editing the first or second part then parseInt taked the event code and makes it an int.
-             }
              switch (event.code) {
                case 'KeyH':
                   alert(instructions);
@@ -98,31 +168,9 @@
     		       case'KeyR':
                   randomizeGrid(grid);
                   break;
-                case"Enter":
-                  ruleString=tempRuleString;
-                  tempRuleString=[[],[]];
-                  slashPressed=false;
-                  break;
-                case "Slash":
-                  slashPressed= !slashPressed;
-                  break;
-                case "KeyC":
-                  ruleString=[[3],[2,3]]
                 case "BracketLeft":
                   gridWidth+=16;
                   gridHeight+=9;
-                  newGrid=Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
-                  for(let x=0;x<grid.length;x++){
-                     for(let y=0;y<grid[0].length;y++){
-                        newGrid[x][y]=grid[x][y];
-                     }
-                  }
-                  grid=newGrid;
-                  resizeCanvas();
-                  break;
-                case "BracketLeft":
-                  gridWidth=Math.floor(gridWidth*1.2);
-                  gridHeight=Math.floor(gridHeight*1.2);
                   newGrid=Array(gridWidth).fill().map(() => Array(gridHeight).fill(defaultValue));
                   for(let x=0;x<grid.length;x++){
                      for(let y=0;y<grid[0].length;y++){
