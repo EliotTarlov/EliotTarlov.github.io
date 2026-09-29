@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Diffusion: Fluid</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; }
+        canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+
+    <!-- A stable fluid (Stam, 1999) the cursor stirs; particles lean along its flow.
+
+         The fluid is a velocity field on a grid FLUID_SCALE times coarser than
+         the board. Every display frame:
+           advect      carry the velocity along itself, fading it, and paint the cursor's stroke in
+           vorticity   spin up existing swirls a little, so the coarse grid doesn't smear them out
+           project     remove divergence, so the fluid neither piles up nor thins out anywhere
+                       (see projection.js) -->
+    <script type="module">
+        import { createContext, createProgram, createField, createDouble, createBoard, trackCursor, pass, run, STROKE_GLSL } from './diffusion.js';
+        import { createProjection, GRID_HEADER } from './projection.js';
+
+        const FLUID_SCALE = 4;         // board cells per fluid cell
+        const VELOCITY_HALF_LIFE = 3;  // seconds for the flow to slow to half
+        const DRAG_STRENGTH = 0.008;   // particle lean, per fluid cell/s of flow
+
+        const ADVECT_FS = GRID_HEADER + `
+        uniform sampler2D u_velocity;  // fluid cells/s
+        uniform float u_dt;
+        uniform float u_decay;         // how much of the flow survives this frame
+        uniform vec2 u_from;           // cursor at the previous frame, in fluid cells
+        uniform vec2 u_to;             // cursor now, in fluid cells
+        uniform bool u_active;         // whether the cursor is on the canvas
+
+        const float RADIUS = 5.0;      // width of the stroke, in fluid cells
+        ${STROKE_GLSL}
+
+        void main() {
+            vec2 res = vec2(textureSize(u_velocity, 0));
+            vec2 p = gl_FragCoord.xy;
+            // semi-Lagrangian: take the velocity from wherever this bit of fluid just came from
+            vec2 back = p - u_dt * texture(u_velocity, p / res).xy;
+            vec2 v = u_decay * texture(u_velocity, back / res).xy;
+            if (u_active) {
+                v = mix(v, (u_to - u_from) / u_dt, stroke(p, u_from, u_to, RADIUS));
+            }
+            fragColor = vec4(v, 0.0, 1.0);
+        }`;
+
+        // r: how fast the fluid spins, counterclockwise positive
+        const CURL_FS = GRID_HEADER + `
+        uniform sampler2D u_velocity;
+
+        void main() {
+            ivec2 p = ivec2(gl_FragCoord.xy);
+            float curl = 0.5 * ((at(u_velocity, p + X).y - at(u_velocity, p - X).y)
+                              - (at(u_velocity, p + Y).x - at(u_velocity, p - Y).x));
+            fragColor = vec4(curl, 0.0, 0.0, 1.0);
+        }`;
+
+        // vorticity confinement: push each swirl's flow around its center
+        const VORTICITY_FS = GRID_HEADER + `
+        uniform sampler2D u_velocity;
+        uniform sampler2D u_curl;
+        uniform float u_dt;
+
+        const float CONFINEMENT = 10.0;
+
+        float spin(ivec2 p) { return abs(at(u_curl, p).r); }
+
+        void main() {
+            ivec2 p = ivec2(gl_FragCoord.xy);
+            // towards where it spins hardest
+            vec2 n = 0.5 * vec2(spin(p + X) - spin(p - X), spin(p + Y) - spin(p - Y));
+            n /= length(n) + 1e-4;
+            vec2 force = CONFINEMENT * at(u_curl, p).r * vec2(n.y, -n.x);
+            fragColor = vec4(at(u_velocity, p).xy + u_dt * force, 0.0, 1.0);
+        }`;
+
+        const canvas = document.querySelector('#glCanvas');
+        const gl = createContext(canvas);
+        const board = createBoard(gl);
+        const cursor = trackCursor(canvas);
+
+        const fluidSize = board.size.map(n => Math.ceil(n / FLUID_SCALE));
+        const toFluid = ([x, y]) => [x * fluidSize[0] / board.size[0], y * fluidSize[1] / board.size[1]];
+
+        const advectProgram = createProgram(gl, ADVECT_FS);
+        const curlProgram = createProgram(gl, CURL_FS);
+        const vorticityProgram = createProgram(gl, VORTICITY_FS);
+
+        const velocity = createDouble(() => createField(gl, fluidSize));
+        const curl = createField(gl, fluidSize);
+        const project = createProjection(gl, fluidSize);
+
+        run(board, dt => {
+            dt = Math.min(dt, 1 / 30); // a long frame, like a backgrounded tab's, would fling the fluid
+
+            const stroke = cursor.stroke();
+            pass(gl, advectProgram, velocity.write, {
+                u_dt: dt,
+                u_decay: Math.pow(0.5, dt / VELOCITY_HALF_LIFE),
+                u_from: stroke ? toFluid(stroke[0]) : [0, 0],
+                u_to: stroke ? toFluid(stroke[1]) : [0, 0],
+                u_active: stroke !== null,
+            }, { u_velocity: velocity.read.texture });
+            velocity.swap();
+
+            pass(gl, curlProgram, curl, {}, { u_velocity: velocity.read.texture });
+            pass(gl, vorticityProgram, velocity.write, { u_dt: dt },
+                { u_velocity: velocity.read.texture, u_curl: curl.texture });
+            velocity.swap();
+
+            project(velocity);
+
+            return { texture: velocity.read.texture, scale: DRAG_STRENGTH };
+        });
+    </script>
+</body>
+</html>

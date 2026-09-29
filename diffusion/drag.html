@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Diffusion: Drag</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; }
+        canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+
+    <!-- The cursor paints its velocity onto a fading trail. Particles lean
+         along the painted velocity, so they get dragged along the stroke. -->
+    <script type="module">
+        import { createContext, createProgram, createField, createDouble, createBoard, trackCursor, pass, run, STROKE_GLSL } from './diffusion.js';
+        import {createBandpassDisplay} from './bandpass.js';
+        const TRAIL_HALF_LIFE = 0.5;  // seconds for the trail to fade to half
+        const DRAG_STRENGTH = 0.001;  // lean, per cell/s of painted velocity
+        const SMALL_SIGMA = 4;
+        const LARGE_SIGMA = 8;
+
+        // rg: cursor velocity (cells/s), blended in where the stroke is drawn
+        const TRAIL_FS = `#version 300 es
+        precision highp float;
+        precision highp sampler2D;
+        uniform sampler2D u_trail;     // previous trail
+        uniform vec2 u_from;           // cursor at the previous frame, in board cells
+        uniform vec2 u_to;             // cursor now, in board cells
+        uniform bool u_active;         // whether the cursor is on the canvas
+        uniform float u_dt;            // seconds since the previous frame
+        uniform float u_fade;          // how much of the previous trail survives this frame
+        out vec4 fragColor;
+
+        const float RADIUS = 20.0;     // width of the stroke, in cells
+        ${STROKE_GLSL}
+
+        void main() {
+            vec2 velocity = u_fade * texelFetch(u_trail, ivec2(gl_FragCoord.xy), 0).rg;
+            if (u_active) {
+                float f = stroke(gl_FragCoord.xy, u_from, u_to, RADIUS);
+                velocity = mix(velocity, (u_to - u_from) / u_dt, f);
+            }
+            fragColor = vec4(velocity, 0.0, 1.0);
+        }`;
+
+        const canvas = document.querySelector('#glCanvas');
+        const gl = createContext(canvas);
+        const board = createBoard(gl);
+        const cursor = trackCursor(canvas);
+
+        const trailProgram = createProgram(gl, TRAIL_FS);
+        const trail = createDouble(() => createField(gl, board.size));
+
+        run(board, dt => {
+            const stroke = cursor.stroke();
+            pass(gl, trailProgram, trail.write, {
+                u_from: stroke?.[0] ?? [0, 0],
+                u_to: stroke?.[1] ?? [0, 0],
+                u_active: stroke !== null,
+                u_dt: dt,
+                u_fade: Math.pow(0.5, dt / TRAIL_HALF_LIFE),
+            }, { u_trail: trail.read.texture });
+            trail.swap();
+
+            return { texture: trail.read.texture, scale: DRAG_STRENGTH };
+        }, createBandpassDisplay(gl, board, SMALL_SIGMA, LARGE_SIGMA));
+    </script>
+    <div style="width:300px; height:200px; font-size:50px; background:#FFF; font-color:#777">HELLO!</div>
+</body>
+</html>
