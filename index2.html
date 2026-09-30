@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Diffusion</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #111; font-family: sans-serif; }
+        canvas { width: 100vw; height: 100vh; display: block; }
+        #ui { position: absolute; top: 10px; left: 10px; color: white; pointer-events: none; background: rgba(0,0,0,0.5); padding: 8px; border-radius: 4px; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+
+    <script id="vs" type="x-shader/x-vertex">#version 300 es
+        in vec4 position;
+        void main() { gl_Position = position; }
+    </script>
+
+    <!-- Runs at fixed simulation resolution, once per sim step.
+         Each texel holds a particle count. Every particle steps in one of four
+         directions, leaning along the velocity the cursor's trail left behind.
+         The board is walled: a particle that would step off it stays put.
+
+         A fragment shader can't scatter particles to its neighbors, so each cell
+         instead gathers: for each neighbor it recomputes how that neighbor split
+         its particles among the four directions, and keeps the share pointed at
+         itself. The split is seeded by (neighbor, step), so all four cells that
+         look at a neighbor agree on its split and no particles are lost. -->
+    <script id="fs-buffer-a" type="x-shader/x-fragment">#version 300 es
+        precision highp float;
+        precision highp usampler2D;
+        uniform vec3 iResolution;
+        uniform int iFrame;            // sim step, not display frame
+        uniform usampler2D iChannel0;
+        uniform highp sampler2D u_trail; // rg: cursor velocity
+        out uvec4 fragColor;
+
+        const float DRAG_STRENGTH = 0.003;   // lean along the trail, per cell/s
+        const uint EXACT_LIMIT = 64u;      // above this, binomials use a normal approximation
+        const ivec2 DIRS[4] = ivec2[4](ivec2(0, 1), ivec2(1, 0), ivec2(-1, 0), ivec2(0, -1));
+
+        bool inBounds(ivec2 p) {
+            ivec2 r = ivec2(textureSize(iChannel0, 0));
+            return all(greaterThanEqual(p, ivec2(0))) && all(lessThan(p, r));
+        }
+
+        uint count(ivec2 p) { return texelFetch(iChannel0, p, 0).x; }
+
+        uint hash(uint x) {
+            x ^= x >> 16; x *= 0x7feb352du;
+            x ^= x >> 15; x *= 0x846ca68bu;
+            x ^= x >> 16;
+            return x;
+        }
+
+        // uniform float in [0, 1), advancing the stream
+        float rand(inout uint state) {
+            state = hash(state);
+            return float(state >> 8) * (1.0 / 16777216.0);
+        }
+
+        // number of successes in n trials with probability p
+        uint binomial(uint n, float p, inout uint state) {
+            if (n <= EXACT_LIMIT) {
+                uint k = 0u;
+                for (uint i = 0u; i < n; i++) {
+                    if (rand(state) < p) k++;
+                }
+                return k;
+            }
+            // Box-Muller normal sample
+            float u1 = max(rand(state), 1e-7);
+            float u2 = rand(state);
+            float z = sqrt(-2.0 * log(u1)) * cos(6.28318530718 * u2);
+            float mean = float(n) * p;
+            float sd = sqrt(mean * (1.0 - p));
+            return uint(clamp(round(mean + sd * z), 0.0, float(n)));
+        }
+
+        // how many of cell q's particles step in each of the four DIRS
+        uvec4 split(ivec2 q) {
+            // along the velocity the cursor left behind
+            vec2 lean = DRAG_STRENGTH * texelFetch(u_trail, q, 0).rg;
+
+            // softmax over the four directions; subtracting the max keeps exp from overflowing
+            vec4 logits;
+            for (int k = 0; k < 4; k++) {
+                logits[k] = dot(lean, vec2(DIRS[k]));
+            }
+            vec4 w = exp(logits - max(max(logits.x, logits.y), max(logits.z, logits.w)));
+            w /= w.x + w.y + w.z + w.w;
+
+            // multinomial as a chain of conditional binomials
+            uint state = hash(uint(q.x) ^ hash(uint(q.y) ^ hash(uint(iFrame))));
+            uint remaining = count(q);
+            float remainingP = 1.0;
+            uvec4 s;
+            for (int k = 0; k < 3; k++) {
+                s[k] = binomial(remaining, clamp(w[k] / remainingP, 0.0, 1.0), state);
+                remaining -= s[k];
+                remainingP -= w[k];
+            }
+            s[3] = remaining;
+            return s;
+        }
+
+        void main() {
+            ivec2 px = ivec2(gl_FragCoord.xy);
+
+            // particles stepping in from neighbors
+            uint total = 0u;
+            bool onEdge = false;
+            for (int k = 0; k < 4; k++) {
+                ivec2 q = px - DIRS[k];
+                if (inBounds(q)) total += split(q)[k];
+                if (!inBounds(px + DIRS[k])) onEdge = true;
+            }
+
+            // particles of our own that tried to step through a wall
+            if (onEdge) {
+                uvec4 own = split(px);
+                for (int k = 0; k < 4; k++) {
+                    if (!inBounds(px + DIRS[k])) total += own[k];
+                }
+            }
+
+            if (iFrame < 1) {
+                total = hash(uint(px.x) ^ hash(uint(px.y))) % 20u;
+            }
+            fragColor = uvec4(total, 0u, 0u, 1u);
+        }
+    </script>
+
+    <!-- Runs every display frame at simulation resolution.
+         The cursor's trail: the previous trail faded, with the segment the cursor
+         moved along this frame drawn on top as a soft line.
+           rg: cursor velocity (cells/s), blended in where the line is drawn -->
+    <script id="fs-trail" type="x-shader/x-fragment">#version 300 es
+        precision highp float;
+        precision highp sampler2D;
+        uniform sampler2D iChannel0;   // previous trail
+        uniform vec2 u_from;           // cursor at the previous frame, in sim texels
+        uniform vec2 u_to;             // cursor now, in sim texels
+        uniform bool u_active;         // whether the cursor is on the canvas
+        uniform float u_dt;            // seconds since the previous frame
+        uniform float u_fade;          // how much of the previous trail survives this frame
+        out vec4 fragColor;
+
+        const float RADIUS = 20.0;     // width of the stroke, in cells
+
+        float segmentDistance(vec2 p, vec2 a, vec2 b) {
+            vec2 pa = p - a, ba = b - a;
+            float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+            return length(pa - ba * h);
+        }
+
+        void main() {
+            ivec2 px = ivec2(gl_FragCoord.xy);
+            vec2 velocity = texelFetch(iChannel0, px, 0).rg * u_fade;
+
+            if (u_active) {
+                float d = segmentDistance(vec2(px), u_from, u_to);
+                float f = exp(-d * d / (RADIUS * RADIUS));
+                velocity = mix(velocity, (u_to - u_from) / u_dt, f);
+            }
+            fragColor = vec4(velocity, 0.0, 1.0);
+        }
+    </script>
+
+    <!-- viewport, fades from the previous sim step to the current one -->
+    <script id="fs-main" type="x-shader/x-fragment">#version 300 es
+        precision highp float;
+        precision highp usampler2D;
+        uniform vec3 iResolution;      // Canvas size
+        uniform vec2 iSimResolution;   // Simulation texture size
+        uniform int u_overscan;        // sim cells hidden past each edge of the canvas
+        uniform usampler2D iChannel0;  // current sim step
+        uniform usampler2D iChannel1;  // previous sim step
+        uniform float u_blend;         // 0 shows previous, 1 shows current
+        uniform highp sampler2D u_trail; // rg: cursor velocity
+        uniform bool u_showField;      // overlay the trail's velocity
+        out vec4 fragColor;
+
+        const float WHITE_COUNT = 23.0;   // particle count drawn as full white
+        const float FIELD_SCALE = 1000.0; // cursor speed (cells/s) drawn at full strength
+
+        vec3 hue(float angle) {
+            return 0.5 + 0.5 * cos(angle + vec3(0.0, -2.0944, 2.0944));
+        }
+
+        void main() {
+            // stretch the visible part of the simulation grid over the canvas
+            vec2 uv = gl_FragCoord.xy / iResolution.xy;
+            ivec2 visible = ivec2(iSimResolution) - 2 * u_overscan;
+            ivec2 texelCoords = min(ivec2(uv * vec2(visible)), visible - 1) + u_overscan;
+
+            float current = float(texelFetch(iChannel0, texelCoords, 0).x);
+            float previous = float(texelFetch(iChannel1, texelCoords, 0).x);
+            float val = min(mix(previous, current, u_blend) / WHITE_COUNT, 1.0);
+            vec3 color = vec3(val);
+
+            if (u_showField) {
+                // velocity: hue is direction, brightness is speed
+                vec2 v = texelFetch(u_trail, texelCoords, 0).rg;
+                vec3 field = hue(atan(v.y, v.x)) * min(length(v) / FIELD_SCALE, 1.0);
+                color = 0.35 * color + field;
+            }
+            fragColor = vec4(color, 1.0);
+        }
+    </script>
+
+    <script>
+        const canvas = document.querySelector('#glCanvas');
+        const gl = canvas.getContext('webgl2');
+
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        const OVERSCAN = 64; // sim cells hidden past each edge of the canvas, so walls stay off-screen
+        const SIM_RES = [canvas.width + 2 * OVERSCAN, canvas.height + 2 * OVERSCAN]; // Fixed game board size, taken from the initial window
+        const STEP_MS = 100; // time between sim steps; the display fades across it
+        const TRAIL_HALF_LIFE = 0.5; // seconds for the cursor's trail to fade to half
+        let target = null;   // cursor in sim texels, or null when the cursor is off the canvas
+        let prevTarget = null; // cursor at the previous display frame
+
+        // F overlays the trail's velocity
+        let showField = false;
+        window.addEventListener('keydown', e => {
+            if (e.key === 'f') showField = !showField;
+        });
+
+        // the trail is stored in half floats, which need this to be rendered to
+        if (!gl.getExtension('EXT_color_buffer_float')) console.error('EXT_color_buffer_float unavailable; the trail will not work');
+
+        function createProgram(vsId, fsId) {
+            const vs = gl.createShader(gl.VERTEX_SHADER);
+            gl.shaderSource(vs, document.getElementById(vsId).text); gl.compileShader(vs);
+            const fs = gl.createShader(gl.FRAGMENT_SHADER);
+            gl.shaderSource(fs, document.getElementById(fsId).text); gl.compileShader(fs);
+            if (!gl.getShaderParameter(fs, gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(fs));
+            const prog = gl.createProgram();
+            gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+            gl.linkProgram(prog);
+            return prog;
+        }
+
+        const progBufferA = createProgram('vs', 'fs-buffer-a');
+        const progTrail = createProgram('vs', 'fs-trail');
+        const progMain = createProgram('vs', 'fs-main');
+
+        // Full-screen quad
+        const vao = gl.createVertexArray();
+        gl.bindVertexArray(vao);
+        const buf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, -1,1, 1,-1, 1,1]), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+        // a pair of textures to ping-pong between, each with a framebuffer to draw into it
+        function createTargets(internalFormat, format, type) {
+            let textures = [], fbos = [];
+            for(let i=0; i<2; i++) {
+                textures[i] = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, textures[i]);
+                gl.texImage2D(gl.TEXTURE_2D, 0, internalFormat, SIM_RES[0], SIM_RES[1], 0, format, type, null);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+                fbos[i] = gl.createFramebuffer();
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fbos[i]);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, textures[i], 0);
+            }
+            return [textures, fbos];
+        }
+
+        // the board is handled as a texture of unsigned particle counts
+        const [textures, fbos] = createTargets(gl.R32UI, gl.RED_INTEGER, gl.UNSIGNED_INT);
+        // the cursor's trail: rg velocity
+        const [trailTextures, trailFbos] = createTargets(gl.RGBA16F, gl.RGBA, gl.HALF_FLOAT);
+
+        canvas.addEventListener('pointermove', e => {
+            const rect = canvas.getBoundingClientRect();
+            target = [
+                OVERSCAN + (e.clientX - rect.left) / rect.width * (SIM_RES[0] - 2 * OVERSCAN),
+                OVERSCAN + (1 - (e.clientY - rect.top) / rect.height) * (SIM_RES[1] - 2 * OVERSCAN),
+            ];
+        });
+        canvas.addEventListener('pointerleave', () => target = null);
+
+        let step = 0;
+        let readIdx = 0;     // holds the previous step
+        let writeIdx = 1;    // holds the current step
+        let lastStepTime = -Infinity;
+        let lastFrameTime = null;
+        let trailIdx = 0;    // holds the current trail
+
+        function updateTrail(dt) {
+            const readTrail = trailIdx;
+            trailIdx = 1 - trailIdx;
+
+            gl.useProgram(progTrail);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, trailFbos[trailIdx]);
+            gl.viewport(0, 0, SIM_RES[0], SIM_RES[1]);
+            gl.uniform2f(gl.getUniformLocation(progTrail, "u_from"), ...(prevTarget ?? target ?? [0, 0]));
+            gl.uniform2f(gl.getUniformLocation(progTrail, "u_to"), ...(target ?? [0, 0]));
+            gl.uniform1i(gl.getUniformLocation(progTrail, "u_active"), target !== null);
+            gl.uniform1f(gl.getUniformLocation(progTrail, "u_dt"), dt);
+            gl.uniform1f(gl.getUniformLocation(progTrail, "u_fade"), Math.pow(0.5, dt / TRAIL_HALF_LIFE));
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, trailTextures[readTrail]);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+            prevTarget = target;
+        }
+
+        function simulate() {
+            // the newest state becomes the input; the older texture is overwritten
+            [readIdx, writeIdx] = [writeIdx, readIdx];
+
+            gl.useProgram(progBufferA);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, fbos[writeIdx]);
+            gl.viewport(0, 0, SIM_RES[0], SIM_RES[1]);
+            gl.uniform3f(gl.getUniformLocation(progBufferA, "iResolution"), SIM_RES[0], SIM_RES[1], 1);
+            gl.uniform1i(gl.getUniformLocation(progBufferA, "iFrame"), step);
+            gl.uniform1i(gl.getUniformLocation(progBufferA, "iChannel0"), 0);
+            gl.uniform1i(gl.getUniformLocation(progBufferA, "u_trail"), 1);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, textures[readIdx]);
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, trailTextures[trailIdx]);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+            step++;
+        }
+
+        function display(blend) {
+            gl.useProgram(progMain);
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.uniform3f(gl.getUniformLocation(progMain, "iResolution"), canvas.width, canvas.height, 1);
+            gl.uniform2f(gl.getUniformLocation(progMain, "iSimResolution"), SIM_RES[0], SIM_RES[1]);
+            gl.uniform1i(gl.getUniformLocation(progMain, "u_overscan"), OVERSCAN);
+            gl.uniform1f(gl.getUniformLocation(progMain, "u_blend"), blend);
+            gl.uniform1i(gl.getUniformLocation(progMain, "iChannel0"), 0);
+            gl.uniform1i(gl.getUniformLocation(progMain, "iChannel1"), 1);
+            gl.uniform1i(gl.getUniformLocation(progMain, "u_trail"), 2);
+            gl.uniform1i(gl.getUniformLocation(progMain, "u_showField"), showField);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, textures[writeIdx]);
+            gl.activeTexture(gl.TEXTURE1);
+            gl.bindTexture(gl.TEXTURE_2D, textures[readIdx]);
+            gl.activeTexture(gl.TEXTURE2);
+            gl.bindTexture(gl.TEXTURE_2D, trailTextures[trailIdx]);
+            gl.drawArrays(gl.TRIANGLES, 0, 6);
+        }
+
+        function render(now) {
+            const dt = Math.max((now - (lastFrameTime ?? now)) / 1000, 1e-3);
+            lastFrameTime = now;
+            updateTrail(dt);
+
+            if (now - lastStepTime >= STEP_MS) {
+                simulate();
+                lastStepTime = now; // not += STEP_MS, so a backgrounded tab doesn't burst on return
+            }
+            display(Math.min((now - lastStepTime) / STEP_MS, 1));
+            requestAnimationFrame(render);
+        }
+        requestAnimationFrame(render);
+    </script>
+    <div> HELLO!</div>
+</body>
+</html>
