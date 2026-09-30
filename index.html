@@ -2,8 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Diffusion</title>
+    <script src="rough.js"></script>
+    <script src="rough-box.js"></script>
     <style>
+        /* touches stir the board instead of scrolling, zooming or pulling to refresh */
+        html, body { touch-action: none; overscroll-behavior: none; }
         body { margin: 0; overflow: hidden; background: #111; }
         canvas { width: 100vw; height: 100vh; display: block; }
     </style>
@@ -11,11 +16,15 @@
 <body>
     <canvas id="glCanvas"></canvas>
 
-    <!-- Particles diffusing on a walled board of chunky cells, stirred by the cursor.
+    <!-- Particles diffusing on a walled board of chunky cells, stirred by the cursor
+         and pulled by the device's gravity, so they pile up against whichever wall
+         is down. The walls sit just past the edges of the screen as the page loaded,
+         and the board stays fixed to the phone when the screen rotates.
 
          Every STEP_MS, each particle moves one cell up, down, left or right, at
          random but leaning along the velocity the cursor painted onto a fading
-         trail, so strokes drag particles along. The board is drawn as its density
+         trail, so strokes drag particles along, and leaning towards whichever way
+         is down on a tilted phone. The board is drawn as its density
          fluctuations between SMALL_SIGMA and LARGE_SIGMA cells across, at full
          contrast, fading between steps.
 
@@ -77,6 +86,7 @@
         precision highp sampler2D;
         uniform usampler2D u_counts;
         uniform sampler2D u_trail;     // rg: cursor velocity, in cells/s
+        uniform vec2 u_gravity;        // lean towards down, the same everywhere
         uniform int u_step;
         out uvec4 fragColor;
 
@@ -123,7 +133,7 @@
 
         // how many of cell q's particles step in each of the four DIRS
         uvec4 split(ivec2 q) {
-            vec2 lean = DRAG_STRENGTH * texelFetch(u_trail, q, 0).rg;
+            vec2 lean = DRAG_STRENGTH * texelFetch(u_trail, q, 0).rg + u_gravity;
 
             // softmax over the four directions; subtracting the max keeps exp from overflowing
             vec4 logits;
@@ -239,8 +249,9 @@
         uniform sampler2D u_blurCurrent;
         uniform sampler2D u_blurPrevious;
         uniform float u_blend;         // 0 shows previous, 1 shows current
-        uniform int u_overscan;        // board cells hidden past each edge of the canvas
-        uniform int u_cellSize;        // canvas pixels per board cell
+        uniform float u_cellSize;      // canvas pixels per board cell
+        uniform vec2 u_screenCells;    // canvas size, in board cells
+        uniform vec2 u_rotation;       // cos and sin of the screen's turn from the phone's portrait
         uniform float u_smallSigma;
         out vec4 fragColor;
 
@@ -250,10 +261,19 @@
         const vec3 LIGHT = vec3(0.8);
 
         void main() {
-            // each board cell covers a u_cellSize square of canvas pixels
+            // each board cell covers a u_cellSize square of canvas pixels. The board is
+            // turned back against the screen's rotation, centered, so it stays still on the phone.
             ivec2 size = textureSize(u_current, 0);
-            ivec2 visible = size - 2 * u_overscan;
-            ivec2 texel = min(ivec2(gl_FragCoord.xy) / u_cellSize, visible - 1) + u_overscan;
+            vec2 fromCenter = gl_FragCoord.xy / u_cellSize - 0.5 * u_screenCells;
+            vec2 cell = 0.5 * vec2(size) + mat2(u_rotation.x, -u_rotation.y,
+                                                u_rotation.y, u_rotation.x) * fromCenter;
+            ivec2 texel = ivec2(floor(cell));
+
+            // off the board, as when the screen has turned to a different shape: plain mid-grey
+            if (any(lessThan(texel, ivec2(0))) || any(greaterThanEqual(texel, size))) {
+                fragColor = vec4(mix(DARK, LIGHT, 0.5), 1.0);
+                return;
+            }
 
             float count = mix(float(texelFetch(u_previous, texel, 0).x),
                               float(texelFetch(u_current, texel, 0).x), u_blend);
@@ -272,8 +292,11 @@
     </script>
 
     <script>
-        const CELL_SIZE = 2;          // screen pixels (physical, not CSS) per board cell, across and down
+        // physical screen pixels per board cell, across and down: 2 CSS pixels, so cells look the
+        // same size on high-DPI screens, rounded to whole physical pixels so they stay crisp
+        const CELL_SIZE = Math.max(1, Math.round(2 * window.devicePixelRatio));
         const OVERSCAN = 64;          // board cells hidden past each edge of the canvas, so the walls stay off-screen
+        const GRAVITY_STRENGTH = 0.3; // lean, per m/s² of gravity along the phone's face; upright is ~9.8 m/s²
         const STEP_MS = 200;          // time between board steps; the display fades across it
         const TRAIL_HALF_LIFE = 0.5;  // seconds for the trail to fade to half
         const SMALL_SIGMA = 1;        // finest blobs shown, in cells
@@ -292,9 +315,30 @@
         window.addEventListener('resize', resize);
         resize();
 
-        // fixed at the canvas's size when the page loads
-        const BOARD_SIZE = [Math.ceil(canvas.width / CELL_SIZE) + 2 * OVERSCAN,
-                            Math.ceil(canvas.height / CELL_SIZE) + 2 * OVERSCAN];
+        // cos and sin of how far the screen has turned from the phone's portrait, in quarter turns
+        function screenRotation() {
+            const degrees = screen.orientation?.angle ?? window.orientation ?? 0;
+            const angle = Math.round(degrees / 90) * Math.PI / 2;
+            return [Math.round(Math.cos(angle)), Math.round(Math.sin(angle))];
+        }
+
+        // The board is fixed to the phone, not the screen: it's laid out as the phone
+        // held in portrait, and drawn turned back against the screen's rotation.
+        // Its size is the canvas's when the page loads, in portrait, plus the overscan.
+        const BOARD_SIZE = (() => {
+            const cells = [Math.ceil(canvas.width / CELL_SIZE) + 2 * OVERSCAN,
+                           Math.ceil(canvas.height / CELL_SIZE) + 2 * OVERSCAN];
+            return screenRotation()[1] === 0 ? cells : [cells[1], cells[0]];
+        })();
+
+        // the board cell under canvas pixel [x, y], counted from the bottom left like GL.
+        // Matches the draw shader.
+        function boardCell([x, y]) {
+            const [c, s] = screenRotation();
+            const dx = x / CELL_SIZE - canvas.width / CELL_SIZE / 2;
+            const dy = y / CELL_SIZE - canvas.height / CELL_SIZE / 2;
+            return [BOARD_SIZE[0] / 2 + c * dx + s * dy, BOARD_SIZE[1] / 2 - s * dx + c * dy];
+        }
 
         // Full-screen quad, drawn by every pass
         gl.bindVertexArray(gl.createVertexArray());
@@ -397,10 +441,34 @@
             const rect = canvas.getBoundingClientRect();
             const x = (e.clientX - rect.left) * canvas.width / rect.width;
             const y = (rect.bottom - e.clientY) * canvas.height / rect.height;
-            cursor = [OVERSCAN + x / CELL_SIZE, OVERSCAN + y / CELL_SIZE];
+            cursor = boardCell([x, y]);
         });
         // relatedTarget is null only when the pointer leaves the window entirely
         window.addEventListener('pointerout', e => { if (e.relatedTarget === null) cursor = null; });
+
+        // gravity along the phone's face in m/s², in the board's axes (x right and y up in
+        // portrait), or zero without a motion sensor
+        let gravity = [0, 0];
+        function listenForMotion() {
+            window.addEventListener('devicemotion', e => {
+                const a = e.accelerationIncludingGravity;
+                if (a?.x == null || a?.y == null) return;
+                // sign checked on an iPhone; some Android browsers may read the opposite way
+                gravity = [a.x, a.y];
+            });
+        }
+        // iOS only shares motion once asked, and only prompts from a tap. Asking on load
+        // answers at once if the visitor has already decided, and refuses if a prompt is needed,
+        // so then ask again on the first tap. Other browsers share motion freely.
+        if (typeof window.DeviceMotionEvent?.requestPermission === 'function') {
+            const askForMotion = () => DeviceMotionEvent.requestPermission()
+                .then(state => { if (state === 'granted') listenForMotion(); });
+            askForMotion().catch(() => {
+                window.addEventListener('pointerup', () => askForMotion().catch(console.error), { once: true });
+            });
+        } else {
+            listenForMotion();
+        }
 
         let step = 0;
         let lastFrameTime = null;
@@ -421,7 +489,8 @@
             prevCursor = cursor;
 
             if (now - lastStepTime >= STEP_MS) {
-                pass(stepProgram, counts.write, { u_step: step },
+                pass(stepProgram, counts.write,
+                    { u_step: step, u_gravity: gravity.map(g => GRAVITY_STRENGTH * g) },
                     { u_counts: counts.read.texture, u_trail: trail.read.texture });
                 counts.swap();
                 step++;
@@ -435,8 +504,9 @@
 
             pass(drawProgram, null, {
                 u_blend: Math.min((now - lastStepTime) / STEP_MS, 1),
-                u_overscan: OVERSCAN,
                 u_cellSize: CELL_SIZE,
+                u_screenCells: [canvas.width / CELL_SIZE, canvas.height / CELL_SIZE],
+                u_rotation: screenRotation(),
                 u_smallSigma: SMALL_SIGMA,
             }, {
                 u_current: counts.read.texture,
@@ -449,7 +519,7 @@
         requestAnimationFrame(render);
     </script>
     <div style="position:absolute; top:0; left:0; width:100%; height:100%; display: flex; justify-content: center; align-items: center;">
-        <div style="width:50%; height:100%; background:#EEEB">Hi</div>
+        <rough-box fill="#DEEB" roughness="1" fill-style="solid" stroke-width="3" bowing="6" style="width: min(40rem, 100% - 2rem); padding: clamp(1rem, 4vw, 3rem); box-sizing: border-box;">Hi</rough-box>
     </div>
 </body>
 </html>
