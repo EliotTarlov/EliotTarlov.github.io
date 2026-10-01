@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Diffusion</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;1,100;1,200;1,300;1,400;1,500;1,600;1,700&display=swap" rel="stylesheet">
     <script src="rough.js"></script>
     <script src="rough-box.js"></script>
     <style>
@@ -90,7 +93,7 @@
         uniform int u_step;
         out uvec4 fragColor;
 
-        const float DRAG_STRENGTH = 0.004; // lean, per cell/s of painted velocity
+        const float DRAG_STRENGTH = 0.006; // lean, per cell/s of painted velocity
         const uint EXACT_LIMIT = 64u;      // above this, binomials use a normal approximation
         const ivec2 DIRS[4] = ivec2[4](ivec2(0, 1), ivec2(1, 0), ivec2(-1, 0), ivec2(0, -1));
 
@@ -239,7 +242,8 @@
          it is at scales between the two sigmas than above them, in units of the
          fluctuation you'd expect from particles scattered at random, so the
          contrast is the same whatever the density. A little of each cell's own
-         graininess is kept on top. -->
+         graininess is kept on top. Where there are fewer than about two particles
+         per cell, it fades to dark. -->
     <script id="fs-draw" type="x-shader/x-fragment">#version 300 es
         precision highp float;
         precision highp usampler2D;
@@ -287,6 +291,10 @@
             float pattern = (blurred.x - blurred.y) / blobNoise;
             float grain = (count - blurred.y) / sqrt(mean);
             float grey = clamp(0.5 + PATTERN_GAIN * pattern + GRAIN_GAIN * grain, 0.0, 1.0);
+            // where there are hardly any particles, fade to dark, so empty isn't drawn as average.
+            // Below one particle per cell the pattern's contrast is capped (mean is at least 1),
+            // so the fade must finish above that, or empty edges glow back towards mid-grey.
+            grey *= smoothstep(1.0, 2.0, blurred.y);
             fragColor = vec4(mix(DARK, LIGHT, grey), 1.0);
         }
     </script>
@@ -519,7 +527,11 @@
         requestAnimationFrame(render);
     </script>
     <div style="position:absolute; top:0; left:0; width:100%; height:100%; display: flex; justify-content: center; align-items: center;">
-        <rough-box fill="#DEEB" roughness="1" fill-style="solid" stroke-width="3" bowing="6" style="width: min(40rem, 100% - 2rem); padding: clamp(1rem, 4vw, 3rem); box-sizing: border-box;">Hi</rough-box>
+        <rough-box fill="#DEEA" roughness="2.8" hachure-gap="7" fill-weight="8" stroke-width="0" style="width: min(40rem, 100% - 2rem); padding: clamp(1rem, 4vw, 3rem); box-sizing: border-box;">
+        <div style="font-family: 'IBM Plex Mono'">Hi! I'm Eliot, its lovely to meet you. I'm from San Francisco and I love getting coffee with strangers.<br>
+        My favorite book is The Echo Wife by Sarah Gailey, I'm interested in pharmacology and emergent phenomena, and I love walking and pastries.<br>
+        Contact me at <a href="mailto:eliottarlov@gmail.com">eliottarlov@gmail.com</a>, on signal at eliottarlov.99, or on discord @paler0se I look forward to chatting with you :)</div>
+        </rough-box>
     </div>
 </body>
 </html>
