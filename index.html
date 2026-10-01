@@ -27,8 +27,14 @@
         .shut #eye .lid, .shut #eye .lash { transform: scaleY(-1); }
         .shut #eye .pupil { transform: scale(0); transition-delay: 0s; }
 
-        #intro { clip-path: inset(-2rem round 0); transition: clip-path 0.5s ease-in-out; }
-        .shut #intro { clip-path: inset(50% -2rem round 50%); visibility: hidden;
+        /* instructions for touch screens or for mice, whichever the visitor mainly points with */
+        @media (pointer: coarse) { .mouse-only { display: none; } }
+        @media not (pointer: coarse) { .touch-only { display: none; } }
+
+        /* the intro's padding leaves room for the box's squiggles, which spill past its edges */
+        #intro { padding: 2rem; flex-shrink: 0; clip-path: inset(0 round 0);
+                 transition: clip-path 0.5s ease-in-out; }
+        .shut #intro { clip-path: inset(50% 0 round 50%); visibility: hidden;
                        transition: clip-path 0.5s ease-in-out, visibility 0s 0.5s; }
     </style>
 </head>
@@ -543,11 +549,14 @@
         requestAnimationFrame(render);
     </script>
     <div style="position:absolute; top:0; left:0; width:100%; height:100%; display: flex; justify-content: center; align-items: center;">
-        <rough-box id="intro" fill="#DEEA" roughness="2.8" hachure-gap="7" fill-weight="8" stroke-width="0" style="width: min(40rem, 100% - 2rem); padding: clamp(1rem, 4vw, 3rem); box-sizing: border-box;">
-        <div style="font-family: 'IBM Plex Mono'">Hi! I'm Eliot, its lovely to meet you. I'm from San Francisco and I love getting coffee with strangers.<br>
-        My favorite book is The Echo Wife by Sarah Gailey, I'm interested in pharmacology and emergent phenomena, and I love walking and pastries.<br>
-        Contact me at <a href="mailto:eliottarlov@gmail.com">eliottarlov@gmail.com</a>, on signal at eliottarlov.99, or on discord @paler0se I look forward to chatting with you :)</div>
-        </rough-box>
+        <div id="intro">
+            <rough-box fill="#DEEA" roughness="2.8" hachure-gap="7" fill-weight="8" stroke-width="0" style="width: min(40rem, 100vw - 2rem); padding: clamp(1rem, 4vw, 3rem); box-sizing: border-box;">
+            <div style="font-family: 'IBM Plex Mono'">Howdy stranger! I'm Eliot, and if you're in San Francisco I would love to get coffee with you.<br>
+            The static behind me is a random-walk particle-sim. <span class="touch-only">Drag your finger around and tilt your phone</span><span class="mouse-only">Mouse around</span> to see how it reacts.<br>
+            My favorite book is The Echo Wife, I like pharmacology, Magic: the Gathering, and reading, and I too am a random walker (though judging by how often I end up at a bakery, random might be generous).<br>
+            Contact me at <a href="mailto:eliottarlov@gmail.com">eliottarlov@gmail.com</a>, on signal at eliottarlov.99, or on discord @paler0se</div>
+            </rough-box>
+        </div>
     </div>
     <button id="eye" aria-label="Hide the introduction" aria-pressed="false">
         <svg viewBox="8 14 84 72" fill="white" stroke="grey" stroke-width="2" stroke-linecap="round">
