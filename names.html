@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Names</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <script src="rough.js"></script>
+    <script src="rough-box.js"></script>
+    <style>
+        body { margin: 0; min-height: 100vh; padding: 2rem 1rem; box-sizing: border-box;
+               display: flex; justify-content: center; align-items: center;
+               background: #111; font-family: 'IBM Plex Mono', monospace; }
+        rough-box { width: min(32rem, 100%); padding: clamp(1rem, 4vw, 3rem); box-sizing: border-box; }
+
+        h1 { margin: 0.5rem 0; font-size: 1.75rem; }
+        .step { margin: 0; opacity: 0.6; }
+        img { display: block; width: 10rem; height: 10rem; margin: 1rem 0; background: #0002; }
+
+        label, input, button { display: block; font: inherit; }
+        input { width: 100%; box-sizing: border-box; margin: 0.5rem 0 1rem; padding: 0.5rem;
+                border: 2px solid #111; background: #FFF8; }
+        button { padding: 0.5rem 1.5rem; border: 2px solid #111; background: #111; color: #DEE; cursor: pointer; }
+
+        table { margin-top: 1.5rem; border-collapse: collapse; }
+        th, td { padding: 0.15rem 1.5rem 0.15rem 0; text-align: left; font-weight: 400; }
+        th { opacity: 0.6; }
+    </style>
+</head>
+<body>
+    <!-- A daily drill for remembering names: about five minutes, over breakfast.
+
+         A session is three steps:
+           review   name the people met in the previous session, if that was before today
+           meet     SESSION_SIZE new people, one at a time. For each, type the picture
+                    the name was turned into: making that picture is the practice
+           recall   the same people, shuffled, named from their faces alone
+
+         The scores that matter are the last two columns of the history: how many
+         names were recalled straight away, and how many survived until the next session.
+
+         Faces are randomuser.me's stock portraits, and nobody is shown twice until
+         all of them have been. Sessions are kept in this browser's localStorage, so
+         the history lives on whichever device the drill is done on. -->
+
+    <rough-box fill="#DEEA" roughness="2.8" hachure-gap="7" fill-weight="8" stroke-width="0">
+        <main id="card"></main>
+    </rough-box>
+
+    <script>
+        const SESSION_SIZE = 5;        // people met per session
+        const PORTRAITS = 100;         // randomuser.me has this many portraits of each gender, numbered from 0
+        const HISTORY_ROWS = 14;       // sessions listed in the history
+
+        const NAMES = {
+            men: ['Marcus', 'Grant', 'Victor', 'Omar', 'Felix', 'Hugo', 'Dev', 'Andre', 'Malik', 'Diego',
+                  'Kenji', 'Raj', 'Pablo', 'Ivan', 'Oscar', 'Leon', 'Amir', 'Tobias', 'Wes', 'Caleb',
+                  'Jerome', 'Nolan', 'Arjun', 'Mateo', 'Silas', 'Dmitri', 'Walt', 'Kofi', 'Emil', 'Reggie',
+                  'Tariq', 'Boris', 'Clark', 'Hank', 'Louis', 'Jorge', 'Samir', 'Otto', 'Frank', 'Darius'],
+            women: ['Dana', 'Sophie', 'Ingrid', 'Priya', 'Nadia', 'Ruth', 'Camila', 'Mei', 'Fatima', 'Tessa',
+                    'Olga', 'Leila', 'Greta', 'Joy', 'Maribel', 'Anika', 'Wendy', 'Yuki', 'Paloma', 'Bianca',
+                    'Noor', 'Hazel', 'Imani', 'Carmen', 'Lucia', 'Miriam', 'Nell', 'Renata', 'Tamar', 'Zadie',
+                    'Esther', 'Freya', 'Gloria', 'Irene', 'Jade', 'Keiko', 'Lorna', 'Dolores', 'Rosa', 'Simone'],
+        };
+
+        // Every finished session, oldest first:
+        //   { day: 'YYYY-MM-DD', people: [{ face: 'men/12', name, hook }], now, later }
+        // `now` is the recall score straight after meeting, and `later` the score
+        // at the review in the next session, or null if that hasn't happened.
+        const sessions = JSON.parse(localStorage.getItem('names') ?? '[]');
+        const save = () => localStorage.setItem('names', JSON.stringify(sessions));
+
+        const card = document.querySelector('#card');
+        const today = () => new Date().toLocaleDateString('sv'); // Swedish dates are YYYY-MM-DD
+        const portrait = person => `<img src="https://randomuser.me/api/portraits/${person.face}.jpg" alt="">`;
+        const same = (a, b) => a.trim().toLowerCase() === b.toLowerCase();
+
+        function shuffle(items) {
+            for (let i = items.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [items[i], items[j]] = [items[j], items[i]];
+            }
+            return items;
+        }
+
+        // replace the card's contents, and put the cursor where the next keypress belongs
+        function show(html) {
+            card.innerHTML = html;
+            card.querySelector('input, button').focus();
+        }
+
+        // SESSION_SIZE strangers: faces not shown before, with names that differ from each other
+        function strangers() {
+            const faces = Object.keys(NAMES).flatMap(gender =>
+                Array.from({ length: PORTRAITS }, (_, i) => `${gender}/${i}`));
+            const seen = new Set(sessions.flatMap(session => session.people.map(person => person.face)));
+            const unseen = faces.filter(face => !seen.has(face));
+            const pool = unseen.length >= SESSION_SIZE ? unseen : faces; // everyone has been shown: start over
+
+            const names = { men: shuffle([...NAMES.men]), women: shuffle([...NAMES.women]) };
+            return shuffle(pool).slice(0, SESSION_SIZE).map(face =>
+                ({ face, name: names[face.split('/')[0]].pop(), hook: '' }));
+        }
+
+        function history() {
+            const rows = sessions.slice(-HISTORY_ROWS).reverse().map(session => `
+                <tr><td>${session.day}</td>
+                    <td>${session.now} of ${session.people.length}</td>
+                    <td>${session.later === null ? '' : `${session.later} of ${session.people.length}`}</td></tr>`);
+            if (rows.length === 0) return '';
+            return `<table><tr><th>Session</th><th>Right away</th><th>Next session</th></tr>${rows.join('')}</table>`;
+        }
+
+        function start() {
+            show(`
+                <h1>Names</h1>
+                <p>You'll meet ${SESSION_SIZE} people. For each one, turn the name into a picture
+                   (Marcus: a marker), pin it to something about the face (drawing on his eyebrows),
+                   and type what you pictured. Then name all ${SESSION_SIZE} from their faces.</p>
+                <button>Start</button>
+                ${history()}`);
+            card.querySelector('button').onclick = () => {
+                const due = sessions.findLast(session => session.later === null && session.day < today());
+                if (!due) return meet();
+                quiz('Last time you met', due.people, score => { due.later = score; save(); meet(); });
+            };
+        }
+
+        function meet() {
+            const people = strangers();
+            let i = 0;
+            const introduce = () => {
+                if (i === people.length) return quiz('Who is this?', people, finish);
+                const person = people[i];
+                show(`
+                    <p class="step">Meet ${i + 1} of ${people.length}</p>
+                    ${portrait(person)}
+                    <h1>${person.name}</h1>
+                    <form>
+                        <label>Turn the name into a picture and pin it to this face. What do you see?
+                            <input name="hook" required autocomplete="off"></label>
+                        <button>Next</button>
+                    </form>`);
+                const form = card.querySelector('form');
+                form.onsubmit = event => {
+                    event.preventDefault();
+                    person.hook = form.hook.value;
+                    i++;
+                    introduce();
+                };
+            };
+            const finish = score => {
+                sessions.push({ day: today(), people, now: score, later: null });
+                save();
+                show(`
+                    <h1>${score} of ${people.length}</h1>
+                    <p>Next session starts with these ${people.length}, to see who stuck.</p>
+                    <button>Again</button>
+                    ${history()}`);
+                card.querySelector('button').onclick = start;
+            };
+            introduce();
+        }
+
+        // Ask for each person's name from their face, in a random order, then call done(score).
+        function quiz(title, people, done) {
+            const order = shuffle([...people]);
+            let i = 0, score = 0;
+            const ask = () => {
+                if (i === order.length) return done(score);
+                const person = order[i];
+                const step = `<p class="step">${title}: ${i + 1} of ${order.length}</p>${portrait(person)}`;
+                show(`
+                    ${step}
+                    <form>
+                        <label>First name
+                            <input name="name" required autocomplete="off" autocapitalize="words"></label>
+                        <button>Check</button>
+                    </form>`);
+                const form = card.querySelector('form');
+                form.onsubmit = event => {
+                    event.preventDefault();
+                    const typed = form.name.value;
+                    const right = same(typed, person.name);
+                    if (right) score++;
+                    show(`
+                        ${step}
+                        <h1>${person.name}</h1>
+                        <p>${right ? 'Got it.' : 'Missed. You typed <span id="typed"></span>.'}</p>
+                        <p>Your picture: <span id="hook"></span></p>
+                        <button>Next</button>`);
+                    // typed text goes in as text, never as markup
+                    card.querySelector('#hook').textContent = person.hook;
+                    if (!right) card.querySelector('#typed').textContent = typed.trim();
+                    card.querySelector('button').onclick = () => { i++; ask(); };
+                };
+            };
+            ask();
+        }
+
+        start();
+    </script>
+</body>
+</html>
