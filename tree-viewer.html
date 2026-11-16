@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Family tree</title>
+<style>
+@font-face { font-family: "LM Dunhill"; src: url("fonts/lm-dunhill.woff") format("woff"); font-display: swap; }
+@font-face { font-family: "LM Quot"; src: url("fonts/lm-quot.woff") format("woff"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "LM Quot"; src: url("fonts/lm-quot-bold.woff") format("woff"); font-weight: 700; font-display: swap; }
+
+:root {
+  --paper: #F1F4F0;      /* tracing paper */
+  --slip: #FFFFFF;       /* pasted paper slips */
+  --ink: #1F2747;        /* blue-black pen */
+  --pencil: #6B7080;     /* later pencil notes */
+  --rule: rgba(31, 39, 71, .2);
+  --mk: #8A8F9C;         /* marker colour, set per branch */
+  --W: 204px;            /* card width */
+  --G: 36px;             /* gutter between generations */
+  --I: 150px;            /* generation I column */
+  --T: 36px;             /* trunk allowance */
+  --display: "LM Dunhill", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --text: "LM Quot", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html { background: var(--paper); }
+body { margin: 0; font: 13px/1.35 var(--text); color: var(--ink); min-width: max-content; }
+button, input { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+/* ── title block ── */
+.top { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: end; padding: 44px 28px 18px; max-width: 100vw; position: sticky; left: 0; }
+.top h1, #load h1 { font: 400 72px/.92 var(--display); margin: 0; letter-spacing: -.01em; }
+.top p { margin: 14px 0 0; font-size: 15px; color: var(--pencil); max-width: 60ch; }
+.tools { display: flex; gap: 10px; align-items: center; position: relative; }
+.tools input { width: 230px; padding: 8px 10px; background: var(--slip); border: 1px solid var(--ink); border-radius: 0; }
+.tools input::placeholder { color: var(--pencil); }
+.tools button, #load button { white-space: nowrap; padding: 8px 14px; background: var(--ink); color: var(--slip); border: 1px solid var(--ink); cursor: pointer; }
+.tools button:hover, #load button:hover { background: #2c3766; }
+#hits { position: absolute; top: 100%; left: 0; width: 300px; margin: 4px 0 0; padding: 0; list-style: none; background: var(--slip); border: 1px solid var(--ink); z-index: 30; }
+#hits:empty { display: none; }
+#hits button { display: flex; justify-content: space-between; gap: 12px; width: 100%; padding: 7px 10px; background: none; border: 0; text-align: left; cursor: pointer; }
+#hits button:hover, #hits li.on button { background: var(--paper); }
+#hits small { color: var(--pencil); white-space: nowrap; }
+
+.branches { display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 0 28px 22px; max-width: 100vw; position: sticky; left: 0; font-size: 15px; }
+.branches a { color: inherit; text-decoration: none; padding: 0 2px; background: linear-gradient(transparent 58%, color-mix(in srgb, var(--mk) 50%, transparent) 58%, color-mix(in srgb, var(--mk) 50%, transparent) 92%, transparent 92%); }
+.branches a:hover { background: color-mix(in srgb, var(--mk) 50%, transparent); }
+
+/* ── generation header ── */
+.gens { position: sticky; top: 0; z-index: 10; display: flex; padding: 0 28px; background: var(--paper); border-top: 1.5px solid var(--ink); border-bottom: 1.5px solid var(--ink); }
+.gens div { flex: none; width: calc(var(--W) + var(--G)); padding: 7px 0 5px; color: var(--pencil); font-size: 12px; white-space: nowrap; }
+.gens div:first-child { width: calc(var(--I) + var(--T)); }
+.gens b { font: 400 25px/1 var(--display); color: var(--ink); margin-left: 6px; }
+
+/* ── sheet ── */
+#sheet { display: grid; grid-template-columns: var(--I) max-content; padding: 0 28px 96px; }
+.rail { position: relative; }
+.rail-in { position: absolute; left: 0; right: 0; }
+.gen1 { position: sticky; top: 64px; }
+.gen1 .unit { position: relative; width: var(--I); }
+.gen1::after { content: ""; position: absolute; left: 100%; top: 50%; width: 15px; border-top: 1.5px solid var(--ink); }
+#branches { position: relative; }
+.guide { position: absolute; top: 0; bottom: 0; border-left: 1px dashed var(--rule); pointer-events: none; }
+.branch, .grp { position: relative; }
+.branch { scroll-margin-top: 56px; }
+svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.wires .mk { fill: none; stroke: var(--mk); stroke-width: var(--mw, 9px); stroke-linecap: round; stroke-linejoin: round; opacity: .42; }
+.wires .ln { fill: none; stroke: var(--ink); stroke-width: 1; }
+.wires .trunk { fill: none; stroke: var(--ink); stroke-width: 1.5; }
+
+/* ── cards ── */
+.unit { position: absolute; width: var(--W); background: var(--slip); border: 1px solid var(--ink); font-size: var(--fs, 13px); }
+.p { display: block; width: 100%; padding: .46em .7em; background: none; border: 0; text-align: left; cursor: pointer; }
+.p + .p { padding-top: .15em; }
+.p:hover { background: color-mix(in srgb, var(--mk) 16%, var(--slip)); }
+.p.sel { background: color-mix(in srgb, var(--mk) 30%, var(--slip)); }
+.nm { display: block; font-weight: 700; font-size: 1em; line-height: 1.25; }
+.sp .nm { font-weight: 400; }
+.rel { color: var(--pencil); font-weight: 400; margin-right: .38em; }
+.dt { display: block; font-size: .846em; line-height: 1.4; color: var(--pencil); font-variant-numeric: tabular-nums; }
+.unit.g2 .head .nm { font-size: 1.3em; }
+.unit.g2 .head .nm span { background: linear-gradient(transparent 55%, color-mix(in srgb, var(--mk) 48%, transparent) 55%, color-mix(in srgb, var(--mk) 48%, transparent) 94%, transparent 94%); }
+.unit.hit { box-shadow: 0 0 0 5px color-mix(in srgb, var(--mk) 60%, transparent); }
+
+/* ── person panel ── */
+#detail { position: fixed; z-index: 40; top: 0; right: 0; bottom: 0; width: min(390px, 94vw); padding: 26px 26px 40px; overflow: auto; background: var(--slip); border-left: 1.5px solid var(--ink); transform: translateX(102%); transition: transform .18s ease-out; font-size: 14px; line-height: 1.45; }
+#detail.open { transform: none; }
+#detail .x { float: right; margin: -6px -8px 0 12px; padding: 4px 9px; background: none; border: 1px solid var(--ink); cursor: pointer; }
+#detail h2 { font: 400 38px/1.1 var(--display); margin: 0 0 4px; border-bottom: 9px solid color-mix(in srgb, var(--mk) 45%, transparent); padding-bottom: 8px; }
+#detail dl { display: grid; grid-template-columns: 82px 1fr; gap: 7px 10px; margin: 18px 0 0; }
+#detail dt { color: var(--pencil); }
+#detail dd { margin: 0; }
+#detail dd button { padding: 0; background: none; border: 0; border-bottom: 1px solid var(--ink); cursor: pointer; text-align: left; }
+#detail dd button:hover { background: color-mix(in srgb, var(--mk) 30%, transparent); }
+#detail dd small { color: var(--pencil); font-size: 12px; }
+#detail ul { margin: 0; padding: 0; list-style: none; }
+#detail li + li { margin-top: 3px; }
+#detail .notes { margin-top: 20px; padding-top: 14px; border-top: 1px dashed var(--rule); color: var(--pencil); }
+#detail .notes p { margin: 0 0 9px; }
+#detail .src { font-size: 12px; margin-top: 14px; color: var(--pencil); }
+
+#load { padding: 44px 28px; font-size: 15px; }
+#load p { margin: 14px 0 18px; color: var(--pencil); max-width: 60ch; }
+#load .err { color: var(--ink); font-weight: 700; }
+
+/* ── printed booklet ── */
+#print { --W: 200px; --G: 30px; }
+.pg { position: relative; width: 10in; height: 7.2in; overflow: hidden; background: #fff; break-inside: avoid; }
+.pg-side { position: absolute; left: 0; top: 0; width: 7.2in; height: .68in; transform-origin: 0 0; transform: rotate(-90deg) translateX(-100%); display: flex; align-items: baseline; justify-content: center; gap: 22px; white-space: nowrap; }
+.pg-side b { font: 400 30px/1 var(--display); }
+.pg-side span { font-size: 11px; color: var(--pencil); }
+.gen1 .unit { font-size: 13px; }
+.pg-gens { position: absolute; left: .72in; right: 0; top: 0; height: 40px; border-bottom: 1.5px solid var(--ink); }
+.pg-gens div { position: absolute; bottom: 4px; font-size: 10.5px; color: var(--pencil); white-space: nowrap; }
+.pg-gens b { font: 400 22px/1 var(--display); color: var(--ink); margin-left: 5px; }
+.pg-body { position: absolute; left: .72in; top: 50px; }
+.pg-foot { position: absolute; left: .72in; right: 0; bottom: 0; display: flex; justify-content: space-between; font-size: 10px; color: var(--pencil); }
+.pg .p { cursor: default; }
+@media screen { #print { position: absolute; left: -30000px; top: 0; visibility: hidden; } }
+@page { size: landscape; margin: .5in; }
+@media print {
+  html, body { background: #fff; min-width: 0; }
+  .top, .branches, .gens, #sheet, #detail, #load { display: none !important; }
+  .pg { break-after: page; }
+  .pg:last-child { break-after: auto; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}
+@media (max-width: 760px) {
+  .top { grid-template-columns: 1fr; padding-top: 28px; }
+  .top h1, #load h1 { font-size: 46px; }
+  .tools input { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { #detail { transition: none; } html { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<header class="top" hidden>
+  <div><h1 id="title"></h1><p id="sub"></p></div>
+  <div class="tools">
+    <input id="q" type="search" placeholder="Find a person" aria-label="Find a person" autocomplete="off">
+    <ul id="hits"></ul>
+    <button class="open" type="button">Open file</button>
+    <button id="printbtn" type="button">Print booklet</button>
+  </div>
+</header>
+<nav class="branches" aria-label="Branches" hidden></nav>
+<div class="gens" hidden></div>
+<main id="sheet" hidden>
+  <div class="rail"><div class="rail-in"><div class="gen1"></div></div></div>
+  <div id="branches"></div>
+</main>
+<aside id="detail" aria-label="Person details"></aside>
+<div id="load">
+  <h1>Family tree viewer</h1>
+  <p>Open a GEDCOM file (.ged), such as an export from Gramps, to draw it as a tree. The file is read by this page in your browser and is not uploaded anywhere.</p>
+  <p class="err" role="alert" hidden></p>
+  <button class="open" type="button">Open file</button>
+</div>
+<input id="file" type="file" accept=".ged,.gedcom" hidden>
+<div id="print" aria-hidden="true"></div>
+
+<script>
+'use strict';
+/* Settings you might change */
+const CONFIG = {
+  rootFamily: null,            // e.g. '@F1@'; null picks the couple with the most descendants
+  markers: ['#D9A400', '#3FA34D', '#C2569B', '#F08A24', '#2E8BC0', '#7A5BD0', '#8A9A1B', '#D9483B', '#1FA39A', '#9B6A3C'],
+};
+const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+const $ = (s, r = document) => r.querySelector(s);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const NS = 'http://www.w3.org/2000/svg';
+
+/* ── GEDCOM ── */
+function parseGedcom(text) {
+  const recs = {}; const stack = [];
+  for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
+    const m = raw.match(/^\s*(\d+)\s+(?:(@[^@]+@)\s+)?(\S+)(?: (.*))?$/);
+    if (!m) continue;
+    const node = { tag: m[3], val: m[4] || '', kids: [] }, lvl = +m[1];
+    if (lvl === 0) { if (m[2]) { node.id = m[2]; recs[m[2]] = node; } stack.length = 0; stack[0] = node; continue; }
+    const par = stack[lvl - 1]; if (!par) continue;
+    if (node.tag === 'CONT') par.val += '\n' + node.val;
+    else if (node.tag === 'CONC') par.val += node.val;
+    else { par.kids.push(node); stack[lvl] = node; stack.length = lvl + 1; }
+  }
+  const one = (n, t) => n.kids.find(k => k.tag === t), all = (n, t) => n.kids.filter(k => k.tag === t);
+  const ev = (n, t) => { const e = one(n, t); return e ? { date: (one(e, 'DATE') || {}).val || '', place: (one(e, 'PLAC') || {}).val || '', yes: true } : null; };
+  const notes = r => all(r, 'NOTE').map(k => recs[k.val] ? recs[k.val].val : k.val);   // inline text, or a pointer to a NOTE record
+  const P = {}, F = {}, S = {};
+  for (const r of Object.values(recs)) {
+    if (r.tag === 'INDI') {
+      const names = all(r, 'NAME').map(n => { const m = n.val.match(/^(.*?)\s*\/(.*?)\/\s*(.*)$/); return { given: (m ? m[1] : n.val).trim(), surn: m ? m[2].trim() : '', type: ((one(n, 'TYPE') || {}).val || '').toLowerCase() }; });
+      const main = names.find(n => !n.type || n.type === 'birth') || names[0] || { given: '?', surn: '' };
+      const married = names.find(n => n.type === 'married');
+      const src = one(r, 'SOUR');
+      P[r.id] = { id: r.id, given: main.given, surn: main.surn, married: married ? married.surn : '', aka: names.filter(n => n !== main && n.type !== 'married').map(n => (n.given + ' ' + n.surn).trim()),
+        sex: (one(r, 'SEX') || {}).val || 'U', birt: ev(r, 'BIRT'), deat: ev(r, 'DEAT'), buri: ev(r, 'BURI'),
+        famc: (one(r, 'FAMC') || {}).val || null, fams: all(r, 'FAMS').map(k => k.val), notes: notes(r),
+        src: src ? { id: src.val, page: (one(src, 'PAGE') || {}).val || '' } : null };
+    } else if (r.tag === 'FAM') {
+      F[r.id] = { id: r.id, husb: (one(r, 'HUSB') || {}).val || null, wife: (one(r, 'WIFE') || {}).val || null, chil: all(r, 'CHIL').map(k => k.val), marr: ev(r, 'MARR'), div: !!one(r, 'DIV'), notes: notes(r) };
+    } else if (r.tag === 'SOUR') S[r.id] = (one(r, 'TITL') || {}).val || r.id;
+  }
+  return { P, F, S };
+}
+
+/* ── naming and dates ── */
+const fullName = p => [p.given, p.surn, p.married && p.married !== p.surn ? p.married : ''].filter(Boolean).join(' ');
+function fmtDate(d) {
+  if (!d) return '';
+  if (d[0] === '(') return d.slice(1, -1);
+  let pre = '', post = '';
+  d = d.replace(/^(ABT|CAL|EST|BEF|AFT)\s+/, (_, k) => { if (k === 'EST') post = '?'; else pre = { ABT: 'about ', CAL: 'about ', BEF: 'before ', AFT: 'after ' }[k]; return ''; });
+  return pre + d.replace(/\b([A-Z])([A-Z]{2})\b/g, (_, a, b) => a + b.toLowerCase()) + post;
+}
+const year = d => (d && (d.match(/\d{4}/) || [''])[0]) || '';
+function lifeLine(p) {
+  const b = fmtDate(p.birt && p.birt.date), d = fmtDate(p.deat && p.deat.date);
+  if (b && d) return b + ' – ' + d;
+  if (b) return 'b. ' + b;
+  if (d) return 'd. ' + d;
+  return '';
+}
+const lifeYears = p => { const b = year(p.birt && p.birt.date), d = year(p.deat && p.deat.date); return b && d ? b + '–' + d : b ? 'b. ' + b : d ? 'd. ' + d : ''; };
+
+/* ── tree model: a unit is one descendant plus their marriages ── */
+let DB, ROOT, UNIT_OF = new Map(), BRANCH_OF = new Map(), EL_OF = new Map(), DEPTH = 1;
+function buildUnit(pid, depth, seen) {
+  const p = DB.P[pid]; seen.add(pid); DEPTH = Math.max(DEPTH, depth + 1);
+  const u = { p, depth, groups: [] }; UNIT_OF.set(pid, u);
+  for (const fid of p.fams) {
+    const f = DB.F[fid]; if (!f) continue;
+    const sid = f.husb === pid ? f.wife : f.husb;
+    u.groups.push({ f, spouse: sid ? DB.P[sid] : null, kids: f.chil.filter(c => DB.P[c] && !seen.has(c)).map(c => buildUnit(c, depth + 1, seen)) });
+  }
+  return u;
+}
+const kidsOf = u => u.groups.flatMap(g => g.kids);
+function pickRoot() {
+  if (CONFIG.rootFamily && DB.F[CONFIG.rootFamily]) return DB.F[CONFIG.rootFamily];
+  const count = (pid, seen) => { if (seen.has(pid)) return 0; seen.add(pid); return 1 + DB.P[pid].fams.reduce((n, f) => n + (DB.F[f] ? DB.F[f].chil.reduce((m, c) => m + (DB.P[c] ? count(c, seen) : 0), 0) : 0), 0); };
+  let best = null, bestN = -1;
+  for (const f of Object.values(DB.F)) {
+    const top = [f.husb, f.wife].filter(Boolean); if (!top.length || top.some(s => DB.P[s] && DB.P[s].famc)) continue;
+    const n = f.chil.reduce((m, c) => m + count(c, new Set()), 0); if (n > bestN) { bestN = n; best = f; }
+  }
+  return best;
+}
+
+/* ── cards ── */
+function personRow(p, cls, rel) {
+  const b = el('button', 'p ' + cls); b.type = 'button'; b.dataset.id = p.id;
+  const nm = el('span', 'nm'); if (rel) nm.append(el('span', 'rel', rel)); nm.append(el('span', '', fullName(p))); b.append(nm);
+  return b;
+}
+function cardFor(u, note) {
+  const c = el('div', 'unit' + (u.depth === 1 ? ' g2' : ''));
+  const head = personRow(u.p, 'head'); const l = lifeLine(u.p); if (l) head.append(el('span', 'dt', l)); if (note) head.append(el('span', 'dt', note)); c.append(head);
+  const rows = [head];
+  for (const g of u.groups) {
+    if (!g.spouse) { rows.push(head); continue; }
+    const r = personRow(g.spouse, 'sp', g.f.div ? 'm./d.' : 'm.');
+    if (g.f.div) r.title = 'Married, later divorced';
+    const bits = [lifeLine(g.spouse), g.f.marr && g.f.marr.date ? 'm. ' + fmtDate(g.f.marr.date) : ''].filter(Boolean).join(', ');
+    if (bits) r.append(el('span', 'dt', bits));
+    c.append(r); rows.push(r);
+  }
+  return { c, rows };
+}
+
+/* ── layout: generations run left to right, a parent sits beside the middle of its children ── */
+const GAP0 = 10, PAD0 = 16;
+function renderTree(box, root, opt) {
+  const cs = getComputedStyle(box), W = parseFloat(cs.getPropertyValue('--W')), G = parseFloat(cs.getPropertyValue('--G')), T = opt.trunk;
+  const GAP = GAP0 * (opt.k || 1), PAD = PAD0 * (opt.k || 1);
+  const L = new Map();
+  (function make(u) { const k = cardFor(u, u === root && opt.headNote); box.append(k.c); L.set(u, k); kidsOf(u).forEach(make); })(root);
+  for (const [, k] of L) { k.h = k.c.offsetHeight; k.anchor = k.rows.map(r => r.offsetTop + r.offsetHeight / 2); }
+  (function size(u) { const k = L.get(u), ks = kidsOf(u); ks.forEach(size); k.kh = ks.reduce((s, c) => s + L.get(c).sh, 0) + GAP * Math.max(0, ks.length - 1); k.sh = Math.max(k.h, k.kh); })(root);
+  (function place(u, top) {
+    const k = L.get(u); k.x = T + (u.depth - root.depth) * (W + G); k.y = top + (k.sh - k.h) / 2;
+    k.c.style.left = k.x + 'px'; k.c.style.top = k.y + 'px';
+    if (opt.register) EL_OF.set(u.p.id, k.c);
+    let y = top + (k.sh - k.kh) / 2; for (const c of kidsOf(u)) { place(c, y); y += L.get(c).sh + GAP; }
+  })(root, PAD);
+  const rk = L.get(root), height = rk.sh + 2 * PAD;
+  box.style.height = height + 'px'; box.style.width = (T + opt.cols * (W + G) - G) + 'px';
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('class', 'wires'); box.prepend(svg);
+  let d = '';
+  for (const [u, k] of L) {
+    const withKids = u.groups.filter(g => g.kids.length);
+    withKids.forEach((g, i) => {
+      const gi = u.groups.indexOf(g);
+      const oy = k.y + (withKids.length > 1 ? k.anchor[gi + 1] : k.h / 2);
+      const mx = k.x + W + G * (withKids.length > 1 ? .3 + .4 * i / (withKids.length - 1) : .5);
+      const ys = g.kids.map(c => L.get(c).y + L.get(c).h / 2);
+      d += `M${k.x + W} ${oy}H${mx}M${mx} ${Math.min(oy, ...ys)}V${Math.max(oy, ...ys)}`;
+      g.kids.forEach((c, j) => { d += `M${mx} ${ys[j]}H${L.get(c).x}`; });
+    });
+  }
+  const cy = rk.y + rk.h / 2, tx = opt.trunkX;
+  for (const cls of ['mk', 'ln']) { const p = document.createElementNS(NS, 'path'); p.setAttribute('class', cls); p.setAttribute('d', d + `M${tx} ${cy}H${rk.x}`); svg.append(p); }
+  return { height, cy, svg, L };
+}
+function trunk(svg, x, y1, y2) { const p = document.createElementNS(NS, 'path'); p.setAttribute('class', 'trunk'); p.setAttribute('d', `M${x} ${y1}V${y2}`); svg.append(p); }
+
+/* ── screen ── */
+function renderScreen() {
+  const rootF = ROOT, head = DB.P[rootF.husb || rootF.wife], mate = rootF.husb && rootF.wife ? DB.P[rootF.wife] : null;
+  const surname = head.surn || (mate && mate.married) || '';
+  document.title = $('#title').textContent = (surname ? surname + ' Family Tree' : 'Family Tree');
+  const gens = $('.gens'); for (let i = 0; i < DEPTH; i++) { const g = el('div', '', 'Generation'); g.append(el('b', '', ROMAN[i])); gens.append(g); }
+
+  const g1 = $('.gen1'), k1 = cardFor({ p: head, depth: 0, groups: mate ? [{ f: rootF, spouse: mate, kids: [] }] : [] }); g1.append(k1.c);
+  const wrap = $('#branches'), nav = $('.branches'), cs = getComputedStyle(document.documentElement);
+  const W = parseFloat(cs.getPropertyValue('--W')), G = parseFloat(cs.getPropertyValue('--G')), T = parseFloat(cs.getPropertyValue('--T'));
+  for (let i = 1; i < DEPTH - 1; i++) { const gd = el('div', 'guide'); gd.style.left = (T + i * (W + G) - G / 2) + 'px'; wrap.append(gd); }
+  const tops = ROOT_UNITS; let y = 0, first, last;
+  tops.forEach((u, i) => {
+    const sec = el('section', 'branch'); sec.id = 'b' + (i + 1); sec.style.setProperty('--mk', CONFIG.markers[i % CONFIG.markers.length]); wrap.append(sec);
+    const r = renderTree(sec, u, { trunk: T, trunkX: 15, cols: DEPTH - 1, register: true });
+    trunk(r.svg, 15, i === 0 ? r.cy : 0, i === tops.length - 1 ? r.cy : r.height);
+    if (i === 0) first = y + r.cy; last = y + r.cy; y += r.height;
+    const a = el('a', '', u.p.given.split(' ')[0]); a.href = '#' + sec.id; a.style.setProperty('--mk', CONFIG.markers[i % CONFIG.markers.length]); nav.append(a);
+  });
+  const h1 = k1.c.offsetHeight, rail = $('.rail-in');
+  rail.style.top = Math.max(0, first - h1 / 2) + 'px'; rail.style.height = (last - first + h1) + 'px';
+}
+
+/* ── print: letter/A4 landscape pages, branches packed and split between Generation III families ── */
+function renderPrint() {
+  const host = $('#print'); host.textContent = '';
+  const IN = 96, cols = DEPTH - 1, W0 = 200, G0 = 30, T0 = 22;
+  const bodyW = 10 * IN - .72 * IN - 4, bodyH = 7.2 * IN - 50 - 22, s = Math.min(1, bodyW / (T0 + cols * (W0 + G0) - G0));
+  const W = W0 * s, G = G0 * s, T = T0 * s, limit = bodyH, PAD = PAD0 * s, GAP = GAP0 * s, TX = 8 * s;
+  host.style.setProperty('--W', W + 'px'); host.style.setProperty('--G', G + 'px'); host.style.setProperty('--fs', 13 * s + 'px'); host.style.setProperty('--mw', 9 * s + 'px');
+  // measure every branch once at print size
+  const probe = el('div', 'grp'); host.append(probe);
+  const groups = [];   // {u, i, kids:[...], h, cont}
+  const pages = [[]]; let used = 0;
+  ROOT_UNITS.forEach((u, i) => {
+    probe.textContent = ''; const m = renderTree(probe, u, { trunk: T, trunkX: TX, cols, k: s }).L;
+    const headH = m.get(u).h + 2 * PAD, ks = kidsOf(u);
+    let cur = null;
+    const open = cont => { cur = { u, i, kids: new Set(), kh: 0, h: headH, cont }; pages[pages.length - 1].push(cur); used += headH; };
+    const whole = Math.max(headH, m.get(u).sh + 2 * PAD);
+    if (used && used + whole > limit && (whole <= limit || !ks.length)) { pages.push([]); used = 0; }
+    if (!ks.length) { open(false); return; }
+    for (const c of ks) {
+      const ch = m.get(c).sh;
+      const grow = cur ? Math.max(headH, cur.kh + GAP + ch + 2 * PAD) - cur.h : Math.max(headH, ch + 2 * PAD);
+      if (used + grow > limit && used > 0 && !(cur && !cur.kids.size)) { pages.push([]); used = 0; open(!!cur); }
+      else if (!cur) open(false);
+      const nh = Math.max(headH, cur.kh + (cur.kids.size ? GAP : 0) + ch + 2 * PAD);
+      used += nh - cur.h; cur.h = nh; cur.kh += (cur.kids.size ? GAP : 0) + ch; cur.kids.add(c);
+    }
+  });
+  probe.remove();
+  const rootF = ROOT, head = DB.P[rootF.husb || rootF.wife], mate = rootF.husb && rootF.wife ? DB.P[rootF.wife] : null;
+  const when = new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+  pages.forEach((pg, n) => {
+    const page = el('section', 'pg'); host.append(page);
+    const side = el('div', 'pg-side');
+    side.append(el('b', '', [mate && mate.given, head.given].filter(Boolean).join(' & ') + ' ' + head.surn));
+    for (const q of [mate, head]) if (q) side.append(el('span', '', q.given + ', ' + lifeYears(q)));
+    const gens = el('div', 'pg-gens'), body = el('div', 'pg-body');
+    const foot = el('div', 'pg-foot'); foot.append(el('span', '', document.title + ', printed ' + when), el('span', '', `Page ${n + 1} of ${pages.length}`));
+    page.append(side, gens, body, foot);
+    const draw = k => {
+      gens.textContent = ''; body.textContent = '';
+      for (const [v, x] of [['--W', W0 * k + 'px'], ['--G', G0 * k + 'px'], ['--fs', 13 * k + 'px'], ['--mw', 9 * k + 'px']]) page.style.setProperty(v, x);
+      const w = W0 * k, g = G0 * k, t = T0 * k, tx = 8 * k;
+      for (let i = 1; i < DEPTH; i++) { const d = el('div', '', 'Generation'); d.append(el('b', '', ROMAN[i])); d.style.left = (t + (i - 1) * (w + g)) + 'px'; gens.append(d); }
+      const out = []; let y = 0;
+      for (const grp of pg) {
+        const box = el('div', 'grp'); box.style.setProperty('--mk', CONFIG.markers[grp.i % CONFIG.markers.length]); body.append(box);
+        const clone = { ...grp.u, groups: grp.u.groups.map(x => ({ ...x, kids: x.kids.filter(c => grp.kids.has(c)) })) };
+        const r = renderTree(box, clone, { trunk: t, trunkX: tx, cols, k, headNote: grp.cont ? 'continued' : '' });
+        out.push(r); y += r.height;
+      }
+      out.forEach((r, j) => trunk(r.svg, tx, j === 0 && n === 0 ? r.cy : 0, j === out.length - 1 && n === pages.length - 1 ? r.cy : r.height));
+      return y;
+    };
+    const tall = draw(s); if (tall > limit) draw(s * limit / tall * .985);
+  });
+}
+
+/* ── person panel ── */
+function link(p, extra) { const li = el('li'); const b = el('button', '', fullName(p)); b.type = 'button'; b.dataset.id = p.id; li.append(b); const t = [lifeYears(p), extra].filter(Boolean).join(', '); if (t) li.append(' ', el('small', '', t)); return li; }
+function showPerson(id, scroll) {
+  const p = DB.P[id]; if (!p) return;
+  const d = $('#detail'); d.textContent = '';
+  const bid = BRANCH_OF.get(id); d.style.setProperty('--mk', bid != null ? CONFIG.markers[bid % CONFIG.markers.length] : '#8A8F9C');
+  const x = el('button', 'x', 'Close'); x.type = 'button'; x.onclick = closePanel; d.append(x, el('h2', '', fullName(p)));
+  const dl = el('dl'); d.append(dl);
+  const row = (k, v) => { if (!v) return; const dd = el('dd'); typeof v === 'string' ? dd.textContent = v : dd.append(v); dl.append(el('dt', '', k), dd); };
+  const evt = e => e ? [fmtDate(e.date), e.place].filter(Boolean).join(', ') : '';
+  if (p.aka.length) row('Also', p.aka.join(', '));
+  row('Born', evt(p.birt)); row('Died', evt(p.deat) || (p.deat ? 'Yes, date not recorded' : '')); row('Buried', evt(p.buri));
+  if (p.famc && DB.F[p.famc]) { const f = DB.F[p.famc], ul = el('ul'); [f.husb, f.wife].filter(s => DB.P[s]).forEach(s => ul.append(link(DB.P[s]))); if (ul.children.length) row('Parents', ul); }
+  const fams = p.fams.map(f => DB.F[f]).filter(Boolean), famNotes = [];
+  const sp = el('ul'), ch = el('ul');
+  for (const f of fams) {
+    const sid = f.husb === id ? f.wife : f.husb;
+    if (DB.P[sid]) sp.append(link(DB.P[sid], [f.marr && f.marr.date ? 'm. ' + fmtDate(f.marr.date) : '', f.div ? 'divorced' : ''].filter(Boolean).join(', ')));
+    f.chil.filter(c => DB.P[c]).forEach(c => ch.append(link(DB.P[c])));
+    famNotes.push(...f.notes);
+  }
+  if (sp.children.length) row('Married', sp); if (ch.children.length) row('Children', ch);
+  const notes = [...p.notes, ...famNotes];
+  if (notes.length) { const n = el('div', 'notes'); notes.forEach(t => n.append(el('p', '', t))); d.append(n); }
+  if (p.src) d.append(el('div', 'src', 'Source: ' + (DB.S[p.src.id] || p.src.id) + (p.src.page ? ', ' + p.src.page : '')));
+  d.classList.add('open'); d.scrollTop = 0;
+  document.querySelectorAll('.p.sel').forEach(e => e.classList.remove('sel'));
+  document.querySelectorAll(`#sheet .p[data-id="${CSS.escape(id)}"]`).forEach(e => e.classList.add('sel'));
+  if (scroll) reveal(id);
+}
+function closePanel() { $('#detail').classList.remove('open'); document.querySelectorAll('.p.sel').forEach(e => e.classList.remove('sel')); }
+function reveal(id) {
+  const row = $(`#sheet .p[data-id="${CSS.escape(id)}"]`); if (!row) return;
+  const card = row.closest('.unit'); card.scrollIntoView({ block: 'center', inline: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  card.classList.add('hit'); setTimeout(() => card.classList.remove('hit'), 2200);
+}
+
+/* ── search ── */
+function setupSearch() {
+  const q = $('#q'), hits = $('#hits'); let on = 0, found = [];
+  const norm = s => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const index = () => Object.values(DB.P).map(p => ({ p, k: norm(fullName(p) + ' ' + p.aka.join(' ')) }));
+  const draw = () => { hits.textContent = ''; found.forEach((p, i) => { const li = el('li', i === on ? 'on' : ''), b = el('button'); b.type = 'button'; b.append(el('span', '', fullName(p)), el('small', '', lifeYears(p))); b.onclick = () => pick(p); li.append(b); hits.append(li); }); };
+  const pick = p => { hits.textContent = ''; q.value = fullName(p); showPerson(p.id, true); };
+  q.addEventListener('input', () => { const t = norm(q.value.trim()).split(/\s+/).filter(Boolean); found = t.length ? index().filter(e => t.every(w => e.k.includes(w))).slice(0, 9).map(e => e.p) : []; on = 0; draw(); });
+  q.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown') { on = Math.min(found.length - 1, on + 1); draw(); e.preventDefault(); }
+    else if (e.key === 'ArrowUp') { on = Math.max(0, on - 1); draw(); e.preventDefault(); }
+    else if (e.key === 'Enter' && found[on]) pick(found[on]);
+    else if (e.key === 'Escape') { hits.textContent = ''; }
+  });
+  document.addEventListener('click', e => { if (!e.target.closest('.tools')) hits.textContent = ''; });
+}
+
+/* ── start: nothing is drawn until a file is opened; opening another replaces the tree ── */
+let ROOT_UNITS = [];
+const VIEW = ['.top', '.branches', '.gens', '#sheet'];
+function showStart(problem) {
+  for (const s of VIEW) $(s).hidden = true;
+  const err = $('#load .err'); err.textContent = problem || ''; err.hidden = !problem;
+  $('#load').hidden = false;
+}
+async function draw(text) {
+  closePanel();
+  for (const s of ['.gens', '.gen1', '#branches', '.branches', '#hits']) $(s).textContent = '';
+  $('#q').value = '';
+  UNIT_OF.clear(); BRANCH_OF.clear(); EL_OF.clear(); DEPTH = 1;
+  DB = parseGedcom(text);
+  ROOT = pickRoot();
+  if (!ROOT) return showStart('That file has no families in it, so there is no tree to draw.');
+  const seen = new Set([ROOT.husb, ROOT.wife].filter(Boolean));
+  ROOT_UNITS = ROOT.chil.filter(c => DB.P[c]).map(c => buildUnit(c, 1, seen));
+  ROOT_UNITS.forEach((u, i) => (function mark(v) { BRANCH_OF.set(v.p.id, i); v.groups.forEach(g => { if (g.spouse) BRANCH_OF.set(g.spouse.id, i); g.kids.forEach(mark); }); })(u));
+  try { await Promise.all(['400 13px "LM Quot"', '700 13px "LM Quot"', '400 30px "LM Dunhill"'].map(f => document.fonts.load(f))); } catch (e) {}
+  $('#load').hidden = true; for (const s of VIEW) $(s).hidden = false;
+  renderScreen(); renderPrint();
+  scrollTo(0, 0);
+}
+setupSearch();
+document.addEventListener('click', e => {
+  if (e.target.closest('button.open')) return $('#file').click();
+  const b = e.target.closest('[data-id]'); if (b && !b.closest('#print')) showPerson(b.dataset.id, !!b.closest('#detail'));
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closePanel(); });
+$('#printbtn').onclick = () => window.print();
+$('#file').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) f.text().then(draw); };
+</script>
+</body>
+</html>
